@@ -124,14 +124,59 @@ describe('stepVorEngine', () => {
     expect(inhibitedDelta).toBeLessThan(excitedDelta);
   });
 
-  it('disabling the right horizontal canal produces a measurable asymmetry vs normal', () => {
-    // Short window, well before either trial's slow-phase position reaches the
-    // quick-phase threshold -- once both saturate against that same ~20-degree ceiling,
-    // peak amplitude alone can no longer distinguish "reduced response" from "normal".
-    const normal = runConstant([0, 0, 1.5], 0.05).final.eye.horizontalDeg;
-    const impaired = runConstant([0, 0, 1.5], 0.05, withCanalFunction(normalCanalFunction(), 'horizontal', 'right', 0))
-      .final.eye.horizontalDeg;
-    expect(Math.abs(impaired)).toBeLessThan(Math.abs(normal));
+  it('disabling the right horizontal canal reduces the INCREMENTAL response to rotation vs normal', () => {
+    // Comparing raw eye position magnitude with vs without the impairment (the old form
+    // of this test) is no longer the right check: with an ACUTE destructive lesion (see
+    // scaleFiring's doc comment), the impaired trial's eye position is dominated by a
+    // large, constant resting-imbalance drift (asserted separately below), which makes
+    // its absolute magnitude LARGER than normal's, not smaller -- correctly so. What a
+    // damaged canal genuinely loses is its INCREMENTAL response to a NEW rotation on top
+    // of that resting drift, which is what this test checks instead.
+    const short = 0.05;
+    const impairedFn = withCanalFunction(normalCanalFunction(), 'horizontal', 'right', 0);
+    const normalRest = runConstant([0, 0, 0], short).final.eye.horizontalDeg;
+    const normalRotated = runConstant([0, 0, 1.5], short).final.eye.horizontalDeg;
+    const impairedRest = runConstant([0, 0, 0], short, impairedFn).final.eye.horizontalDeg;
+    const impairedRotated = runConstant([0, 0, 1.5], short, impairedFn).final.eye.horizontalDeg;
+    const normalIncrement = Math.abs(normalRotated - normalRest);
+    const impairedIncrement = Math.abs(impairedRotated - impairedRest);
+    expect(impairedIncrement).toBeLessThan(normalIncrement);
+  });
+
+  it('a disabled canal reports 0Hz firing regardless of head motion (not just a zeroed response)', () => {
+    const { firingRates } = runConstant([0, 0, 1.5], 0.05, withCanalFunction(normalCanalFunction(), 'horizontal', 'right', 0)).final;
+    expect(firingRates.horizontal.right).toBe(0);
+  });
+
+  it('acute UNILATERAL vestibular loss produces spontaneous nystagmus with the head perfectly STILL', () => {
+    // The clinically distinctive sign of acute uncompensated unilateral vestibular loss:
+    // both labyrinths normally fire ~equally at rest (baseline Hz), so their difference
+    // -- and hence eye position -- sits at zero with no head movement. Silencing one
+    // labyrinth entirely (functionScale=0) creates a PERMANENT resting imbalance (that
+    // canal's firing rate drops to 0Hz even at rest, see the test above) that the
+    // brainstem misreads as continuous rotation, producing a real, non-zero drift in eye
+    // position even though omega is (0,0,0) throughout this whole run. A prior version of
+    // this pathology model scaled only the firing-rate DELTA from baseline, which is
+    // always zero at rest regardless of functionScale -- silently unable to reproduce
+    // this sign at all. Only need a moderate run (well under one quick-phase cycle) since
+    // any nonzero drift at all, with zero head movement, is the point being tested.
+    const impairedFn = withCanalFunction(normalCanalFunction(), 'horizontal', 'right', 0);
+    let state = initialVorEngineState();
+    let result;
+    for (let i = 0; i < Math.round(0.3 / DT); i++) {
+      result = stepVorEngine(state, v3(0, 0, 0), DT, impairedFn);
+      state = result.state;
+    }
+    expect(Math.abs(result!.eye.horizontalDeg)).toBeGreaterThan(0.05);
+
+    // Sanity check: with ALL canals intact, the same stationary-head run must NOT drift.
+    let normalState = initialVorEngineState();
+    let normalResult;
+    for (let i = 0; i < Math.round(0.3 / DT); i++) {
+      normalResult = stepVorEngine(normalState, v3(0, 0, 0), DT);
+      normalState = normalResult.state;
+    }
+    expect(Math.abs(normalResult!.eye.horizontalDeg)).toBeLessThan(1e-9);
   });
 
   it('quick-phase resets keep slow-phase position bounded under a long sustained yaw', () => {

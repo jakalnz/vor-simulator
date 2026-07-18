@@ -16,15 +16,31 @@ export function withCanalFunction(fn: CanalFunction, canal: CanalType, side: Ear
 }
 
 /**
- * Scales a canal's contribution to the firing-rate DELTA (fired - baseline) by
- * functionScale -- functionScale=0 means this canal contributes nothing beyond its own
- * baseline (simulating complete unilateral loss), functionScale=1 is normal. Deliberately
- * a simple linear scalar per (canal, side), not an exhaustive pathology taxonomy -- the
- * shape is generic enough to extend later (partial hypofunction, gain asymmetry) without
- * redesign.
+ * Scales a canal's ENTIRE firing rate (not just its delta from baseline) by
+ * functionScale -- functionScale=0 means this canal is permanently silent (0Hz, whether
+ * the head is moving or not), functionScale=1 is normal.
+ *
+ * This is deliberately NOT "baseline + (fired - baseline) * functionScale" (an earlier
+ * version of this function did that, scaling only the RESPONSE-TO-ROTATION while leaving
+ * resting output pinned at the normal baseline regardless of functionScale) -- that
+ * models a pure gain deficit (can't respond to movement, but still tonically active at
+ * rest), not a destructive lesion. A real acutely destroyed/silenced labyrinth doesn't
+ * fire at all, even with the head stationary, which is exactly what makes ACUTE
+ * UNCOMPENSATED unilateral vestibular loss clinically distinctive: with both labyrinths
+ * normally firing ~equally at rest (so their difference, and hence eye position, sits at
+ * zero), a canal permanently silenced to 0Hz creates a large, PERMANENT resting
+ * imbalance the brainstem misreads as continuous rotation -- producing spontaneous
+ * nystagmus even in a perfectly still patient, the hallmark sign this scaling is meant to
+ * reproduce. Scaling the whole firing rate (not just its delta) is what makes that
+ * resting imbalance appear at all; scaling only the delta cannot represent it, since
+ * delta = 0 at rest regardless of functionScale.
+ *
+ * Deliberately a simple linear scalar per (canal, side), not an exhaustive pathology
+ * taxonomy -- the shape is generic enough to extend later (partial hypofunction, gain
+ * asymmetry) without redesign.
  */
-export function scaleFiringDelta(baselineHz: number, firedHz: number, functionScale: number): number {
-  return baselineHz + (firedHz - baselineHz) * functionScale;
+export function scaleFiring(firedHz: number, functionScale: number): number {
+  return firedHz * functionScale;
 }
 
 export function allCanalSides(): [CanalType, EarSide][] {

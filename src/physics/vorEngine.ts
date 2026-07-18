@@ -2,7 +2,7 @@ import { Vec3, dot, RAD2DEG } from './types';
 import { CanalType, EarSide, CANAL_PLANE_NORMAL, AMPULLOFUGAL_IS_EXCITATORY, AMPULLOFUGAL_SIGN, ALL_CANAL_TYPES, ALL_EAR_SIDES } from './canal';
 import { updateCupula } from './cupula';
 import { firingRate, FiringRateParams } from './firingRate';
-import { CanalFunction, scaleFiringDelta, normalCanalFunction } from './pathology';
+import { CanalFunction, scaleFiring, normalCanalFunction } from './pathology';
 import {
   TAU_CUPULA,
   QUICK_PHASE_THRESHOLD,
@@ -71,7 +71,11 @@ export function defaultVorEngineParams(): VorEngineParams {
 
 export interface VorEngineStepResult {
   state: VorEngineState;
-  /** This tick's raw (pre-pathology-scaling) per-canal firing rates, Hz -- for visualization (canalScene.ts's excitation/inhibition color coding). */
+  /** This tick's per-canal firing rates, Hz, AFTER pathology function-scaling (see
+   * pathology.ts's scaleFiring) -- deliberately the scaled value, not the raw
+   * cupula-driven one, so a disabled/impaired canal's visualization (canalScene.ts's
+   * excitation/inhibition color coding, ui/canalHexPlot.ts) actually shows the reduced
+   * output, not what that canal WOULD have fired absent the pathology. */
   firingRates: PerCanalSide<number>;
   eye: EyeMovementComponents;
 }
@@ -119,9 +123,8 @@ export function stepVorEngine(
       cupula[canal][side] = beta;
 
       const fired = firingRate(beta, canal, params.firing);
-      firingRates[canal][side] = fired;
-
-      const scaledFired = scaleFiringDelta(params.firing.baselineHz, fired, functionScale[canal][side]);
+      const scaledFired = scaleFiring(fired, functionScale[canal][side]);
+      firingRates[canal][side] = scaledFired;
       const delta = scaledFired - params.firing.baselineHz;
 
       const sign = canalExcitationSign(canal, side);
