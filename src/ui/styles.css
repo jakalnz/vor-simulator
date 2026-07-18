@@ -2,6 +2,17 @@
   box-sizing: border-box;
 }
 
+/* Defensive override: several elements toggled via the `hidden` attribute (e.g.
+ * #canal-ear-view/#canal-hex-view, index.html) also carry a class like
+ * .canvas-wrap--split that sets `display: flex` directly -- an author class selector
+ * beats the UA stylesheet's `[hidden] { display: none }` in specificity, so without this
+ * rule the `hidden` attribute is silently ignored on any element that also has such a
+ * class (confirmed live: the canal panel's ear-model view stayed visible and squeezed
+ * the new firing-rate plot into a sliver instead of actually hiding). */
+[hidden] {
+  display: none !important;
+}
+
 /* Default (dark) palette -- also explicitly selectable via data-theme="dark" (see
  * ui/theme.ts), which lets the light override below use a plain attribute selector
  * rather than needing :not([data-theme="light"]) everywhere.

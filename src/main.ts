@@ -14,6 +14,7 @@ import { HeadScene } from './scene/headScene';
 
 import { Controls, PlaybackMode } from './ui/controls';
 import { VngTrace } from './ui/vngTrace';
+import { CanalHexPlot } from './ui/canalHexPlot';
 import { keepScreenAwake } from './ui/wakeLock';
 import { initTheme, toggleTheme } from './ui/theme';
 
@@ -24,6 +25,7 @@ const eyeCanvasLeft = document.getElementById('eye-canvas-left') as HTMLCanvasEl
 const eyeCanvasRight = document.getElementById('eye-canvas-right') as HTMLCanvasElement;
 const canalCanvasLeft = document.getElementById('canal-canvas-left') as HTMLCanvasElement;
 const canalCanvasRight = document.getElementById('canal-canvas-right') as HTMLCanvasElement;
+const canalHexCanvas = document.getElementById('canal-hex-canvas') as HTMLCanvasElement;
 const headCanvas = document.getElementById('head-canvas') as HTMLCanvasElement;
 const vngCanvas = document.getElementById('vng-canvas') as HTMLCanvasElement;
 const controlsContainer = document.getElementById('controls') as HTMLDivElement;
@@ -60,6 +62,33 @@ const canalSceneLeft = new CanalScene(canalCanvasLeft, 'left');
 const canalSceneRight = new CanalScene(canalCanvasRight, 'right');
 const headScene = new HeadScene(headCanvas);
 const vngTrace = new VngTrace(vngCanvas);
+const canalHexPlot = new CanalHexPlot(canalHexCanvas);
+
+// Canal panel view toggle: 3D dual-ear model (default) vs. a hexagonal neural
+// firing-rate plot showing all 6 canals at once (see ui/canalHexPlot.ts). Panel-local
+// (not part of the Controls class) since it only affects this one panel's own content,
+// same pattern as the removed canal-style/gravity-mode selects used to be.
+const canalViewToggleBtn = document.getElementById('canal-view-toggle') as HTMLButtonElement;
+const canalEarView = document.getElementById('canal-ear-view') as HTMLDivElement;
+const canalHexView = document.getElementById('canal-hex-view') as HTMLDivElement;
+const canalLegendEar = document.getElementById('canal-legend-ear') as HTMLDivElement;
+const canalLegendHex = document.getElementById('canal-legend-hex') as HTMLDivElement;
+let canalView: 'ear' | 'firing' = 'ear';
+function applyCanalView(): void {
+  const showFiring = canalView === 'firing';
+  canalEarView.hidden = showFiring;
+  canalHexView.hidden = !showFiring;
+  canalLegendEar.hidden = showFiring;
+  canalLegendHex.hidden = !showFiring;
+  // Button shows the view a click would switch TO, same convention as this app's other
+  // toggle-style buttons (e.g. the gyro on/off toggle).
+  canalViewToggleBtn.textContent = showFiring ? 'Ear model' : 'Neural firing';
+}
+canalViewToggleBtn.addEventListener('click', () => {
+  canalView = canalView === 'ear' ? 'firing' : 'ear';
+  applyCanalView();
+});
+applyCanalView();
 
 // About popover -- cites the academic source for the real-anatomy meshes (IE-Map).
 const canalAboutPill = document.getElementById('canal-about-pill') as HTMLButtonElement;
@@ -258,8 +287,13 @@ function renderFrame(): void {
 
   eyeSceneLeft.render();
   eyeSceneRight.render();
-  canalSceneLeft.render();
-  canalSceneRight.render();
+  if (canalView === 'ear') {
+    canalSceneLeft.render();
+    canalSceneRight.render();
+  } else {
+    canalHexPlot.setFiringRates(lastFiringRates);
+    canalHexPlot.render();
+  }
   headScene.render();
   vngTrace.render(simulationTimeSeconds);
 

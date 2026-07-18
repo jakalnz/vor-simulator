@@ -42,9 +42,10 @@
         <div class="view-panel view-panel--canal">
           <h2>
             <span id="canal-panel-title">Semicircular canals</span>
+            <button id="canal-view-toggle" class="about-pill" type="button" title="Switch between the 3D ear model and a neural firing-rate plot">Neural firing</button>
             <button id="canal-about-pill" class="about-pill" type="button">About</button>
           </h2>
-          <div class="canal-canvas-wrap canvas-wrap canvas-wrap--split">
+          <div class="canal-canvas-wrap canvas-wrap canvas-wrap--split" id="canal-ear-view">
             <div class="split-pane">
               <span class="split-pane-label">Right ear</span>
               <canvas id="canal-canvas-right"></canvas>
@@ -54,10 +55,17 @@
               <canvas id="canal-canvas-left"></canvas>
             </div>
           </div>
-          <div class="canal-legend">
+          <div class="canvas-wrap" id="canal-hex-view" hidden>
+            <canvas id="canal-hex-canvas"></canvas>
+          </div>
+          <div class="canal-legend" id="canal-legend-ear">
             <div><span class="swatch" style="background:#9aa3ab"></span>Resting</div>
             <div><span class="swatch" style="background:#e01b24"></span>Excited</div>
             <div><span class="swatch" style="background:#1a5fb4"></span>Inhibited</div>
+          </div>
+          <div class="canal-legend" id="canal-legend-hex" hidden>
+            <div><span class="swatch" style="background:#e2534a"></span>Left canals</div>
+            <div><span class="swatch" style="background:#4caf6b"></span>Right canals</div>
           </div>
         </div>
         <div class="view-panel view-panel--head">
