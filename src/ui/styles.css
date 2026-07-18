@@ -1,0 +1,891 @@
+* {
+  box-sizing: border-box;
+}
+
+/* Default (dark) palette -- also explicitly selectable via data-theme="dark" (see
+ * ui/theme.ts), which lets the light override below use a plain attribute selector
+ * rather than needing :not([data-theme="light"]) everywhere.
+ *
+ * Accent is calcite amber (--accent), not an arbitrary UI blue -- pulled from the same
+ * family as the otoconia-clot legend swatch (#c9a227, see index.html), since otoconia
+ * ("ear rocks", displaced calcium carbonate crystals) is the actual pathology this whole
+ * simulator exists to visualize. Background carries a faint teal-black cast rather than
+ * neutral navy -- vestibular exams (Dix-Hallpike, VNG) are conventionally run in a
+ * darkened room, which this is standing in for. */
+:root,
+:root[data-theme='dark'] {
+  --bg: #0a0e0d;
+  --panel: #141a17;
+  --panel-header: #1a211d;
+  --border: #262e29;
+  --border-soft: #333d36;
+  --text: #e9ece9;
+  --text-dim: #98a49b;
+  --text-faint: #66766a;
+  --accent: #d9a441;
+  --accent-hover: #e8b65c;
+  --radius: 8px;
+  --radius-sm: 6px;
+  --overlay: rgba(16, 20, 18, 0.95);
+}
+
+:root[data-theme='light'] {
+  --bg: #f5f2ea;
+  --panel: #ffffff;
+  --panel-header: #f7f2e6;
+  --border: #e2dac8;
+  --border-soft: #ccc1a6;
+  --text: #201c14;
+  --text-dim: #5c5343;
+  --text-faint: #8a8071;
+  --accent: #b8791f;
+  --accent-hover: #a06a1a;
+  --radius: 8px;
+  --radius-sm: 6px;
+  --overlay: rgba(255, 253, 248, 0.97);
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  padding: 8px;
+  padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  gap: 8px;
+  overflow: hidden;
+}
+
+.vng-panel {
+  flex: 0 0 120px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.vng-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 12px;
+  background: var(--panel-header);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Instrument-label treatment: tracked uppercase mono, the same face already used for
+ * the debug readout -- reused here for every panel title instead of only the numeric
+ * debug line, so headers read like equipment nomenclature (VNG/oscilloscope labeling)
+ * rather than generic app card titles. */
+.vng-header h2,
+.view-panel h2 {
+  font-family: 'SFMono-Regular', Consolas, ui-monospace, monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.vng-header h2 {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.vng-legend {
+  display: flex;
+  gap: 12px;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+.vng-legend .swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 5px;
+}
+
+.vng-panel canvas {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Lives INSIDE the canal panel's own header -- a normal flex item alongside the
+ * style/gravity-mode selects, so on narrow panels where the header wraps, it naturally
+ * drops to its own row below the title/selects instead of floating over the canvas. */
+.about-pill {
+  background: var(--bg);
+  color: var(--text-dim);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.about-pill:hover {
+  background: var(--panel-header);
+  color: var(--text);
+}
+
+/* position:fixed with top/right set by JS (see main.ts) from the pill's own
+ * getBoundingClientRect() -- the canal panel has overflow:hidden (for the canvas's
+ * rounded corners), which would clip an absolutely-positioned popover nested inside it,
+ * so this escapes that ancestor entirely instead of being confined to the panel's box. */
+.about-popover {
+  position: fixed;
+  z-index: 20;
+  background: var(--overlay);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 0.7rem;
+  line-height: 1.5;
+  color: var(--text-faint);
+  max-width: 260px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.about-popover a {
+  color: var(--text-dim);
+}
+
+.about-popover p {
+  margin: 8px 0 0;
+}
+
+.about-qr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.about-qr canvas {
+  border-radius: 4px;
+  /* Canvas backing store is rendered larger (132px, see index.html/main.ts) than its
+     displayed CSS size here, so it stays crisp on hi-DPI screens rather than upscaling
+     a 1:1-rendered bitmap. */
+  width: 110px;
+  height: 110px;
+}
+
+.about-qr span {
+  font-size: 0.65rem;
+  color: var(--text-faint);
+  text-align: center;
+}
+
+/* Debug telemetry controls (see debug/telemetry.ts) -- deliberately understated, this
+ * is a developer aid for retuning release thresholds against real sensor data, not a
+ * user-facing feature. */
+.about-debug {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-faint, rgba(128, 128, 128, 0.25));
+}
+
+.about-debug .about-pill:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+#debug-record-status {
+  font-size: 0.65rem;
+  color: var(--text-faint);
+}
+
+/* Ear/canal/pathology/debris-side toggles, moved out of the control bar's own row and
+ * into this popup (see controls.ts's variantButton/variantPopover) -- fixed/appended to
+ * <body> for the same overflow:hidden-escaping reason as .about-popover, positioned
+ * ABOVE its trigger button (via JS-set bottom, not top) since the control bar sits at
+ * the page's bottom edge. */
+/* display:flex only applies when NOT [hidden] -- an unconditional `display: flex` here
+ * would be an author-stylesheet rule at the same specificity as the UA stylesheet's own
+ * `[hidden] { display: none }`, and author rules win ties regardless of source order, so
+ * it would silently defeat the hidden attribute (confirmed against the live app: the
+ * popover stayed visually open after variantPopover.hidden was set back to true). */
+.variant-popover:not([hidden]) {
+  display: flex;
+}
+
+.variant-popover {
+  position: fixed;
+  z-index: 25;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--overlay);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  min-width: 190px;
+}
+
+.variant-popover button {
+  width: 100%;
+  text-align: left;
+}
+
+/* Persistent readout of the current ear/pathology/debris-side selection, overlaid on
+ * the canal canvas itself -- now that those controls live behind the "BPPV Variant"
+ * popup (see .variant-popover) rather than always-visible inline buttons, this keeps the
+ * current selection legible at a glance without opening it. Offset right of the
+ * top-left scope-reticle tick (.canvas-wrap::before, a 14px mark from x=6 to x=20) so
+ * the two don't overlap. */
+.canal-variant-label {
+  position: absolute;
+  top: 8px;
+  left: 26px;
+  z-index: 4;
+  background: var(--overlay);
+  color: var(--text-dim);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 3px 9px;
+  font-family: 'SFMono-Regular', Consolas, ui-monospace, monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.03em;
+  max-width: calc(100% - 40px);
+  pointer-events: none;
+}
+
+/* Each line (variant, then mode -- see controls.ts's variantLine/modeLine) truncates
+ * independently, since they're separate block children now, not one line of text. */
+.canal-variant-label > div {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Second line: the current playback mode (see controls.ts's modeLine), under the
+ * ear/pathology line -- dimmer and slightly smaller so it reads as secondary/contextual
+ * info, not equal in weight to the variant selection above it. */
+.canal-variant-label__mode {
+  color: var(--text-faint);
+  font-size: 0.9em;
+  margin-top: 1px;
+}
+
+/*
+ * Desktop layout: Eye is the primary diagnostic view, given the most space; Canal and
+ * Head are secondary reference views, stacked in a narrower side column (canal over
+ * head) rather than three equal-width columns -- the eye is what you actually read
+ * nystagmus off, the other two are context. Within that side column, Canal gets more
+ * of the shared height than Head (1.6fr vs 1fr) -- the otoconia clot/cupula/duct detail
+ * needs more room to stay legible than the head orientation indicator does, which is
+ * only ever a coarse "which way is it tilted" glance.
+ */
+#views {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: 1.7fr 1.3fr;
+  grid-template-rows: 1.6fr 1fr;
+  grid-template-areas:
+    'eye canal'
+    'eye head';
+  gap: 8px;
+  min-height: 0;
+}
+
+.view-panel--eye {
+  grid-area: eye;
+}
+.view-panel--canal {
+  grid-area: canal;
+}
+.view-panel--head {
+  grid-area: head;
+}
+
+.view-panel {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  min-height: 0;
+}
+
+.view-panel h2 {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--panel-header);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.inline-toggle {
+  background: var(--bg);
+  color: var(--text-dim);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  font-size: 0.7rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.inline-toggle:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.view-panel canvas {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  display: block;
+  min-height: 0;
+}
+
+/* Shared wrap around every view canvas (eye/canal/head) -- gives each canvas its own
+ * positioning context, separate from the panel's header, so overlays anchor to the
+ * CANVAS's own edges regardless of the header's height (1 or 2 lines depending on
+ * wrap/breakpoint). Canal additionally keeps its own .canal-canvas-wrap class for the
+ * "cleared into utricle" toast, which only exists on that one panel. */
+.canvas-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.canvas-wrap canvas {
+  flex: none;
+}
+
+/* Signature motif: a scope-reticle corner tick on each view canvas, in the accent
+ * color -- these three canvases are the thing being "read" like an instrument display
+ * (nystagmus off the eye, the clot's position off the canal, orientation off the head),
+ * so the accent used for the primary Play action reappears here as "this is a live
+ * readout," not just a card of content. Anchored to the canvas wrap (not the panel), so
+ * it sits over the model, never behind the opaque header/legend. Two opposite corners
+ * only (top-left/bottom-right), thin and short, so it stays a quiet accent rather than
+ * a busy frame. */
+.canvas-wrap::before,
+.canvas-wrap::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+  z-index: 4;
+  opacity: 0.55;
+}
+
+.canvas-wrap::before {
+  top: 6px;
+  left: 6px;
+  border-top: 1.5px solid var(--accent);
+  border-left: 1.5px solid var(--accent);
+}
+
+.canvas-wrap::after {
+  bottom: 6px;
+  right: 6px;
+  border-bottom: 1.5px solid var(--accent);
+  border-right: 1.5px solid var(--accent);
+}
+
+/* Celebratory banner shown once when the otoconia clot settles in the utricle (see
+ * main.ts's clearedIntoUtricle rising-edge check) -- fades in/out rather than just
+ * appearing/disappearing so it reads as a transient toast, not a persistent label.
+ * .cleared-toast--warning (see below) reuses this for the short-arm re-entry case. */
+.cleared-toast {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  max-width: 90%;
+  transform: translateX(-50%) translateY(-6px);
+  background: var(--overlay);
+  border: 1px solid #3f9d5f;
+  color: #a8e8bb;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  z-index: 5;
+}
+
+/* Short-arm re-entry (see main.ts) is a complication, not a success -- amber/red
+ * instead of green so the two toasts are never confused for each other even if shown
+ * in quick succession (e.g. clearing, then re-entering shortly after). */
+.cleared-toast--warning {
+  border-color: #c97a2e;
+  color: #f0c896;
+}
+
+/* The light-on-dark toast text (#a8e8bb/#f0c896 above) has poor contrast against
+ * --overlay's near-white light-theme background -- darker, more saturated variants
+ * for readability there, same green/amber identity. */
+:root[data-theme='light'] .cleared-toast {
+  color: #1f7a3f;
+}
+
+:root[data-theme='light'] .cleared-toast--warning {
+  color: #9a5416;
+}
+
+.cleared-toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* A compact wrapping row, laid out in normal flow BELOW the canvas (not an absolute
+ * overlay on top of it) -- overlaying was hiding the model itself on the canal panel,
+ * which is the smaller side panel and doesn't have room to spare under a floating box. */
+.canal-legend {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 10px;
+  background: var(--panel-header);
+  border-top: 1px solid var(--border);
+  padding: 5px 8px;
+  font-size: 0.64rem;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
+.canal-legend .swatch {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 6px;
+}
+
+#controls {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.85rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* One deliberate row of controls (context toggles, or playback/transport) -- see
+ * controls.ts's contextRow/playbackRow. Wraps internally if its own content is too
+ * wide for the container, but never bleeds into the other row's line. */
+.control-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Pill-shaped (fully rounded), same visual language as .about-pill -- but same
+ * padding/font-size (hence same height) as the original rounded-rect buttons, not the
+ * more compact sizing tried first, which read as too short. #controls's own tighter
+ * padding/gap above still shrank the bar somewhat; since #views has flex:1 1 auto and
+ * #controls is flex:0 0 auto (sized to its own content), that saved height goes
+ * straight to the Eye/Canal/Head views without any other layout change needed. */
+#controls button,
+#controls select,
+.variant-popover button {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+#controls button:hover,
+#controls select:hover,
+.variant-popover button:hover {
+  border-color: var(--accent);
+}
+
+#controls button:active,
+.variant-popover button:active {
+  background: var(--panel-header);
+}
+
+/* Play is the primary action in the transport group -- give it a distinct accent so
+ * it reads as the "main button" at a glance instead of blending into Reset/Reset clot.
+ * (Was a structural :first-child selector that never actually matched the real DOM --
+ * Play rendered as a plain button. An explicit class is unambiguous regardless of how
+ * the surrounding control groups get reshuffled.) */
+#controls .primary-btn {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #14100a;
+  font-weight: 600;
+}
+
+#controls .primary-btn:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+#controls button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#controls input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+/* Position label stacked directly above the scrub bar (see controls.ts's scrubColumn)
+ * -- the range input's own track is thin, leaving spare vertical space above it within
+ * the row's full height (set by the taller select/Play button beside it), so the label
+ * fits there for free instead of costing a whole extra row's height. */
+.scrub-column {
+  display: flex;
+  flex: 1 1 160px;
+  min-width: 120px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+}
+
+.scrub-column span {
+  font-size: 0.72em;
+  color: var(--text-dim);
+  line-height: 1.2;
+}
+
+/* flex-wrap explicitly nowrap (not just relying on the flex default) -- each
+ * control-group is one atomic item within #controls's own wrapping row (#controls has
+ * flex-wrap: wrap), so when a group doesn't fit on the current line it moves to the next
+ * line AS A WHOLE, never splitting its own children (e.g. maneuverGroup's select/Play/
+ * scrub/position-label) across two lines independently. Being explicit here guards that
+ * property against a future edit accidentally adding wrapping inside a group. */
+.control-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  background: var(--text-faint);
+}
+
+.status-dot.on {
+  background: #5fd17a;
+  box-shadow: 0 0 4px #5fd17a;
+}
+
+.debug-readout {
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: 0.72rem;
+  color: #8fd6a0;
+  white-space: pre;
+  margin-left: auto;
+  opacity: 0.85;
+}
+
+/* #8fd6a0 (a light terminal-green tuned for a dark background) has poor contrast
+ * against --panel's near-white light-theme background -- a darker green instead. */
+:root[data-theme='light'] .debug-readout {
+  color: #1f7a3f;
+}
+
+/*
+ * Mobile: portrait phones don't have the width for a 2fr/1fr side-by-side split, and
+ * vertical space is the scarce resource (not horizontal) -- so Eye keeps the top, but
+ * Canal/Head move to a shared row below it (side-by-side, smaller) instead of stacking
+ * further, and the VNG trace + controls both shrink to leave the views most of the
+ * screen. Controls also become a compact sticky bar so users don't have to scroll past
+ * the 3D views to reach Play/Reset.
+ */
+@media (max-width: 760px) {
+  #app {
+    padding: 6px;
+    padding-bottom: calc(6px + env(safe-area-inset-bottom));
+    gap: 6px;
+  }
+
+  .vng-panel {
+    flex-basis: 90px;
+  }
+
+  .vng-header {
+    padding: 5px 10px;
+  }
+
+  .vng-header h2 {
+    font-size: 0.7rem;
+  }
+
+  .vng-legend {
+    gap: 8px;
+    font-size: 0.64rem;
+  }
+
+  /* On mobile the CANAL view (not Eye) gets the large top slot -- the otoconia clot is
+   * small and needs to be tracked as it moves through the duct, which is illegible when
+   * squashed into the small paired-row slot Eye gets on desktop. Eye moves down into
+   * that smaller paired row instead, alongside Head. Canal's share of the two rows
+   * (2.7fr, down from 3fr -- a deliberate ~10% trim, see below) still dominates over
+   * Eye/Head's shared row. */
+  #views {
+    /* Eye/Head split their shared row unevenly (was 1fr 1fr) -- Head is just a coarse
+     * tilt glance, so giving it less width lets Eye (what nystagmus is actually read
+     * off) grow without touching the canal row's own share, which is what sets the
+     * canal model's on-screen size (see canalScene.ts's updateCameraForStyle -- it
+     * fits the model tightly to whatever canvas space its row/column gives it). */
+    grid-template-columns: 1.7fr 1fr;
+    /* Canal's row trimmed ~10% (3fr -> 2.7fr) and handed to Eye/Head's row (1fr -> 1.3fr)
+     * -- requested after Eye still read too small even with the header/legend/control-bar
+     * trims above. This DOES shrink the canal model somewhat (its camera fits tightly to
+     * whatever canvas height this row gives it, see canalScene.ts), a deliberate trade
+     * accepted here in exchange for more Eye height, unlike the earlier chrome-only trims
+     * that avoided touching this row specifically to keep the model's size untouched. */
+    grid-template-rows: minmax(0, 2.7fr) minmax(0, 1.3fr);
+    grid-template-areas:
+      'canal canal'
+      'eye head';
+    gap: 6px;
+  }
+
+  .view-panel h2 {
+    font-size: 0.66rem;
+    padding: 4px 8px;
+  }
+
+  .inline-toggle {
+    font-size: 0.62rem;
+    padding: 1px 5px;
+  }
+
+  /* Canal panel's own chrome (header above, legend below) is pure DOM overhead around
+   * the canvas -- shrinking it hands the freed height straight to the canvas, and the
+   * fit-to-frame camera (see canalScene.ts) uses it, growing the model rather than
+   * leaving dead space. Legend condensed to a single non-wrapping scrollable strip so
+   * it can't cost a second line here the way it could on desktop. */
+  .canal-legend {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    font-size: 0.56rem;
+    padding: 3px 6px;
+    gap: 8px;
+  }
+
+  .about-pill {
+    padding: 2px 8px;
+    font-size: 0.6rem;
+  }
+
+  .canal-variant-label {
+    top: 6px;
+    left: 22px;
+    padding: 1px 7px;
+    font-size: 0.54rem;
+  }
+
+  /* max-height capped tighter than an earlier 34vh -- on a short phone screen that was
+   * eating a third of the viewport on its own, at the model view's expense. Controls
+   * still scroll internally (overflow-y) if they don't all fit, rather than pushing the
+   * views up further. Tightened further (was 22vh) after the eye view was reported still
+   * too small on phones -- the debug readout below is now hidden entirely on mobile (it
+   * was a whole extra full-width row of developer diagnostics, not information a phone
+   * user needs), and button/select sizing here is a bit more compact, both freeing up
+   * vertical space for #views (which #controls and #views split, #views getting whatever
+   * #controls doesn't use -- see #app's flex layout) without shrinking tap targets below
+   * a reasonable minimum.
+   */
+  /* max-height dropped from 16vh -- the two-row structure (see controls.ts's
+   * contextRow/playbackRow) now sets a predictable height from its own content instead
+   * of an unpredictable wrap, so it no longer needs as much headroom reserved for a
+   * worst-case wrap, and the scrollbar is a rare fallback rather than a routine outcome.
+   * (The position label stacks above the scrub bar instead of adding a third row -- see
+   * .scrub-column -- so this stays capped at two rows' worth of height.) */
+  #controls {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    padding: 5px 8px;
+    gap: 3px;
+    font-size: 0.78rem;
+    max-height: 12vh;
+    overflow-y: auto;
+  }
+
+  .control-row {
+    gap: 4px;
+  }
+
+  /* Touch targets: buttons/selects get taller tap areas on touch screens, but trimmed
+   * again here (was 34px/0.74rem) now that the ear/canal/pathology/debris toggles moved
+   * into the "BPPV Variant" popup (see controls.ts) -- what's left on this row (mode
+   * select, Play, the two reset buttons) is tapped far less often than Play/scrub, so it
+   * can afford to be smaller than a primary action would need to be. 30px is still
+   * comfortably above the ~28px minimum usable touch target. */
+  #controls button,
+  #controls select {
+    padding: 5px 8px;
+    font-size: 0.7rem;
+    min-height: 30px;
+  }
+
+  /* Developer diagnostic readout (s/beta/eye-angle/etc) -- useful on desktop, but on
+   * phones it was a whole extra full-width row (flex-basis:100%) purely for numbers a
+   * phone user isn't reading, at the direct expense of the views above. */
+  .debug-readout {
+    display: none;
+  }
+}
+
+/* Floating theme toggle -- always bottom-right, above everything else (including the
+ * mobile sticky controls bar it may sit over), same fixed position/size on every
+ * breakpoint since it's a small, self-contained control, not part of the responsive
+ * grid. The inner icon (a circle split solid black/white) is a fixed, theme-INDEPENDENT
+ * "contrast" glyph -- it represents the toggle action itself, not the current state, so
+ * it deliberately doesn't recolor with --text/--panel the way everything else here does. */
+.theme-toggle {
+  position: fixed;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 30;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.theme-toggle:hover {
+  border-color: var(--accent);
+  transform: scale(1.06);
+}
+
+.theme-toggle:active {
+  transform: scale(0.96);
+}
+
+.theme-toggle-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.6px solid #14161a;
+  background: linear-gradient(90deg, #14161a 50%, #fdfdfd 50%);
+}
+
+/* Fullscreen toggle -- stacked directly above the theme toggle (same fixed corner, same
+ * size language, one size down since it's a secondary action). Hidden entirely via JS
+ * (see main.ts) where the Fullscreen API isn't supported, rather than showing a button
+ * that would silently no-op (notably iOS Safari before iOS 16). */
+.fullscreen-toggle {
+  position: fixed;
+  right: 16px;
+  bottom: calc(70px + env(safe-area-inset-bottom));
+  z-index: 30;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.fullscreen-toggle:hover {
+  border-color: var(--accent);
+  transform: scale(1.06);
+}
+
+.fullscreen-toggle:active {
+  transform: scale(0.96);
+}
+
+/* Reuses the same scope-reticle corner-bracket motif as .canvas-wrap (see that rule's
+ * doc comment) at button scale -- "expand into fullscreen" reads naturally as the same
+ * viewfinder-corners language used everywhere else a canvas is being framed. Rotated 45
+ * degrees while active as a lightweight "now closing inward" cue, rather than authoring
+ * a second, different icon just for that state. */
+.fullscreen-toggle-icon {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  transition: transform 0.15s ease;
+}
+
+.fullscreen-toggle-icon::before,
+.fullscreen-toggle-icon::after {
+  content: '';
+  position: absolute;
+  width: 7px;
+  height: 7px;
+}
+
+.fullscreen-toggle-icon::before {
+  top: 0;
+  left: 0;
+  border-top: 2px solid var(--accent);
+  border-left: 2px solid var(--accent);
+}
+
+.fullscreen-toggle-icon::after {
+  bottom: 0;
+  right: 0;
+  border-bottom: 2px solid var(--accent);
+  border-right: 2px solid var(--accent);
+}
+
+.fullscreen-toggle.is-fullscreen .fullscreen-toggle-icon {
+  transform: rotate(45deg);
+}
