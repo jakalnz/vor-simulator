@@ -104,7 +104,15 @@ export function stepVorEngine(
   headAngularVelocityBody: Vec3,
   dt: number,
   functionScale: CanalFunction = normalCanalFunction(),
-  params: VorEngineParams = defaultVorEngineParams()
+  params: VorEngineParams = defaultVorEngineParams(),
+  /**
+   * Optional additive cupula-flow contribution per canal, same ampullofugal-positive
+   * convention as the head-velocity-driven flow computed below (see canalith.ts's
+   * stepCanalith) -- e.g. gravity-driven BPPV debris. Omitted/undefined entries are
+   * treated as zero, so callers that never pass this see byte-identical behavior to
+   * before this parameter existed.
+   */
+  debrisFlow?: Partial<PerCanalSide<number>>
 ): VorEngineStepResult {
   const cupula = {} as PerCanalSide<number>;
   const firingRates = {} as PerCanalSide<number>;
@@ -118,7 +126,9 @@ export function stepVorEngine(
     for (const side of ALL_EAR_SIDES) {
       const n = CANAL_PLANE_NORMAL[canal][side];
       const omegaProj = dot(headAngularVelocityBody, n);
-      const flow = AMPULLOFUGAL_SIGN[canal][side] * omegaProj;
+      const rotationalFlow = AMPULLOFUGAL_SIGN[canal][side] * omegaProj;
+      const extraFlow = debrisFlow?.[canal]?.[side] ?? 0;
+      const flow = rotationalFlow + extraFlow;
       const beta = updateCupula(state.cupula[canal][side], flow, dt, params.tauCupula);
       cupula[canal][side] = beta;
 

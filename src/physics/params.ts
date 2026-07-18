@@ -74,3 +74,35 @@ export const QUICK_PHASE_THRESHOLD = 0.35;
 
 /** Amount (radians) the quick phase resets the eye back toward center. */
 export const QUICK_PHASE_RESET_AMOUNT = 0.3;
+
+/**
+ * World-frame gravity direction (unit vector, HeadFrame axis convention: +X anterior, +Y
+ * left, +Z superior), i.e. gravity points toward the world's -Z ("down") when the head is
+ * upright/neutral (qHead = identity). Magnitude is irrelevant here -- only direction is
+ * used (physics/canalith.ts projects it onto a canal tangent, then scales by
+ * DEBRIS_MOBILITY_M_PER_S), so this is left as a unit vector rather than 9.81 m/s^2.
+ */
+export const G_WORLD = [0, 0, -1] as const;
+
+/**
+ * Canalithiasis (free-floating otoconia debris) idealized overdamped Stokes-drag arc
+ * velocity, meters/sec, at full gravity alignment with the duct tangent (dot=1). No
+ * inertia lag or latency gating in this minimal-slice model (see canalith.ts) -- an
+ * empirical starting value chosen so debris traverses a typical few-millimeter duct
+ * (sMax, see canalith.ts) in a few seconds of sustained tilt, legible for interactive
+ * teaching use. Flagged for empirical tuning once exercised live.
+ */
+export const DEBRIS_MOBILITY_M_PER_S = 0.0025;
+
+/**
+ * Converts debris arc-velocity (m/s, see canalith.ts's dsdt) into a cupula flow
+ * contribution in the same units/scale as the head-velocity-driven flow term
+ * (AMPULLOFUGAL_SIGN * dot(headAngularVelocityBody, n), order rad/s) so both can be summed
+ * before entering updateCupula. Chosen so a debris arc-velocity near
+ * DEBRIS_MOBILITY_M_PER_S produces a flow magnitude comparable to a brisk head rotation's
+ * (roughly 1-1.5 rad/s) -- an empirical starting value, not literature-derived (the old
+ * app's analogous KAPPA_FLOW/CUPULA_GRAVITY_GAIN constants were tuned against a different,
+ * now-removed linear beta->eye-angle mapping and don't carry over numerically). Flagged
+ * for empirical tuning once exercised live.
+ */
+export const DEBRIS_FLOW_GAIN_PER_M_S = 600;

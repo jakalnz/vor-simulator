@@ -400,11 +400,24 @@ body {
   padding: 2px 4px;
 }
 
-.canal-function-row input[type='checkbox'] {
+.canal-function-row input[type='checkbox'],
+.canal-function-row input[type='radio'] {
   accent-color: var(--accent);
   width: 15px;
   height: 15px;
   cursor: pointer;
+}
+
+/* Divider label inside the Pathology popover separating the canal-function checkboxes
+ * from the BPPV radio selection (see controls.ts). */
+.popover-section-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  opacity: 0.65;
+  padding: 6px 4px 2px;
+  border-top: 1px solid var(--border, rgba(128, 128, 128, 0.3));
+  margin-top: 4px;
 }
 
 /* A compact wrapping row, laid out in normal flow BELOW the canvas (not an absolute

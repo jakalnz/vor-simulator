@@ -1,7 +1,9 @@
-import { Quat, angularVelocityBody } from './physics/types';
+import { Quat, angularVelocityBody, v3, rotateVec, quatInvert } from './physics/types';
 import { CanalType, EarSide, ALL_CANAL_TYPES } from './physics/canal';
 import { CanalFunction, normalCanalFunction, withCanalFunction } from './physics/pathology';
-import { VorEngineState, initialVorEngineState, stepVorEngine } from './physics/vorEngine';
+import { VorEngineState, initialVorEngineState, stepVorEngine, PerCanalSide } from './physics/vorEngine';
+import { CanalithState, initialCanalithState, stepCanalith, sMax } from './physics/canalith';
+import { G_WORLD } from './physics/params';
 import QRCode from 'qrcode';
 
 import { OrientationSource } from './sensors/orientationSource';
@@ -176,6 +178,10 @@ const controls = new Controls(
     onToggleCanalFunction: (canal: CanalType, side: EarSide, enabled: boolean) => {
       canalFunction = withCanalFunction(canalFunction, canal, side, enabled ? 1 : 0);
     },
+    onBppvSelectionChange: (selection) => {
+      bppvSelection = selection;
+      canalithState = initialCanalithState();
+    },
   },
   mode
 );
@@ -188,6 +194,12 @@ if (IS_MOBILE_SCREEN) enableGyro();
 
 // Physics state.
 let vorState: VorEngineState = initialVorEngineState();
+// BPPV (canalithiasis) state -- see physics/canalith.ts. bppvSelection is the single
+// (canal, side) currently modeled as having free-floating debris (null = no BPPV, the
+// default), set via the Controls "Pathology" popover's BPPV radio group.
+let bppvSelection: { canal: CanalType; side: EarSide } | null = null;
+let canalithState: CanalithState = initialCanalithState();
+let lastDebrisArcFraction = 0;
 let lastQHead: Quat = activeOrientationSource().currentOrientation() ?? [0, 0, 0, 1];
 let simulationTimeSeconds = 0;
 // Angular-velocity tracking: needs the TRUE elapsed time between orientation samples,
@@ -200,6 +212,7 @@ let prevSampleTimestampMs: number | null = null;
 
 function resetPhysics(): void {
   vorState = initialVorEngineState();
+  canalithState = initialCanalithState();
   simulationTimeSeconds = 0;
   prevQHeadForVelocity = activeOrientationSource().currentOrientation() ?? lastQHead;
   prevSampleTimestampMs = activeOrientationSource().sampleTimestampMs?.() ?? null;
@@ -237,7 +250,21 @@ function stepPhysicsOnce(dt: number): void {
   prevQHeadForVelocity = qHead;
   lastHeadAngularVelocity = [omegaBody[0], omegaBody[1], omegaBody[2]];
 
-  const result = stepVorEngine(vorState, omegaBody, dt, canalFunction);
+  let debrisFlow: Partial<PerCanalSide<number>> | undefined;
+  if (bppvSelection) {
+    // Gravity direction in HeadFrame this tick: qHead maps head->world (see
+    // physics/types.ts's rotateVec doc comment), so rotating world gravity by qHead's
+    // inverse gives gravity's direction as seen in the head's own frame -- what
+    // canalith.ts needs to know which way debris is pulled along the duct.
+    const gHead = rotateVec(quatInvert(qHead), v3(...G_WORLD));
+    const { canal, side } = bppvSelection;
+    const stepResult = stepCanalith(canalithState, canal, side, gHead, dt);
+    canalithState = stepResult.state;
+    debrisFlow = { [canal]: { [side]: stepResult.flow } } as Partial<PerCanalSide<number>>;
+    lastDebrisArcFraction = canalithState.s / sMax(canal, side);
+  }
+
+  const result = stepVorEngine(vorState, omegaBody, dt, canalFunction, undefined, debrisFlow);
   vorState = result.state;
   lastFiringRates = result.firingRates;
   lastEye = result.eye;
@@ -283,6 +310,16 @@ function renderFrame(): void {
     anterior: lastFiringRates.anterior.right,
     posterior: lastFiringRates.posterior.right,
   });
+  canalSceneLeft.setDebris(
+    bppvSelection && bppvSelection.side === 'left'
+      ? { canal: bppvSelection.canal, arcFraction: lastDebrisArcFraction }
+      : null
+  );
+  canalSceneRight.setDebris(
+    bppvSelection && bppvSelection.side === 'right'
+      ? { canal: bppvSelection.canal, arcFraction: lastDebrisArcFraction }
+      : null
+  );
   headScene.setOrientation(lastQHead);
 
   eyeSceneLeft.render();

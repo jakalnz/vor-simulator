@@ -11,6 +11,7 @@ import {
   HEAD_FRAME_TO_THREE,
 } from './sceneUtils';
 import { resolveAssetUrl } from './assetPaths';
+import { ductPositionAtFraction } from '../physics/canalith';
 import earAnatomyData from './earAnatomy.json';
 
 /**
@@ -65,6 +66,23 @@ const COLOR_EXCITED = new THREE.Color(0xe01b24);
  */
 const COLOR_SATURATION_HZ = 60;
 
+/** Otoconia clot color -- gold, matching clinical illustration convention (old app's
+ * PARTICLE_OFFSETS cluster, see physics research notes), deliberately distinct from both
+ * the excite/inhibit red/blue and the glassy context-mesh tints. */
+const CLOT_COLOR = 0xc9a227;
+/** Small jittered offsets (meters) for a 7-sphere granular cluster, rather than one smooth
+ * sphere -- reads visually as loose debris, not a single object. */
+const CLOT_PARTICLE_OFFSETS: [number, number, number][] = [
+  [0, 0, 0],
+  [0.00018, 0.00006, 0],
+  [-0.00015, 0.00012, 0.00008],
+  [0.00008, -0.00016, -0.00006],
+  [-0.00012, -0.00008, 0.00014],
+  [0.00014, 0.00014, 0.00012],
+  [-0.00018, 0, -0.00012],
+];
+const CLOT_PARTICLE_RADIUS = 0.00012;
+
 /**
  * One ear's real-anatomy labyrinth (all 3 canal ducts + ampullae, common crus, utricle,
  * saccule), loaded from the IEMap dataset. Each canal's duct+ampulla mesh pair gets its
@@ -96,6 +114,9 @@ export class CanalScene {
     THREE.MeshPhysicalMaterial
   >;
   private boundingSphere: { center: THREE.Vector3; radius: number } | null = null;
+  /** Otoconia clot cluster (BPPV canalithiasis debris marker), hidden until setDebris is
+   * called with a non-null selection -- see physics/canalith.ts's arc-length model. */
+  private readonly clotGroup = new THREE.Group();
   /** Canvas drawing-buffer size (px) the camera was last fit to -- see render()'s resize
    * check. Starts at 0 so the very first render after the mesh loads always fits. */
   private lastFitWidth = 0;
@@ -118,6 +139,16 @@ export class CanalScene {
 
     this.camera.position.set(0.02, 0.012, side === 'left' ? -0.024 : 0.024);
     this.camera.lookAt(0, 0, 0);
+
+    const clotMaterial = new THREE.MeshStandardMaterial({ color: CLOT_COLOR, emissive: CLOT_COLOR, emissiveIntensity: 0.3, roughness: 0.6 });
+    const clotGeometry = new THREE.SphereGeometry(CLOT_PARTICLE_RADIUS, 8, 6);
+    for (const [ox, oy, oz] of CLOT_PARTICLE_OFFSETS) {
+      const mesh = new THREE.Mesh(clotGeometry, clotMaterial);
+      mesh.position.set(ox, oy, oz);
+      this.clotGroup.add(mesh);
+    }
+    this.clotGroup.visible = false;
+    this.labyrinthGroup.add(this.clotGroup);
 
     this.loadRealAnatomy();
   }
@@ -274,6 +305,24 @@ export class CanalScene {
       this.ampullaMaterials[canal]?.color.copy(color);
       this.ampullaMaterials[canal]?.emissive.copy(color);
     }
+  }
+
+  /**
+   * Shows/hides and positions the otoconia clot cluster for canalithiasis BPPV. Pass null
+   * to hide it (no BPPV selected, or a different canal/side than this scene's own). The
+   * position is computed in the raw right-ear mesh frame (see canalith.ts's
+   * ductPositionAtFraction) since labyrinthGroup already applies this scene's own
+   * side-mirror transform -- positioning the clot there, not on headGroup, means it
+   * inherits both that mirror and the per-frame head-orientation rotation automatically.
+   */
+  setDebris(selection: { canal: CanalType; arcFraction: number } | null): void {
+    if (!selection) {
+      this.clotGroup.visible = false;
+      return;
+    }
+    const p = ductPositionAtFraction(selection.canal, selection.arcFraction);
+    this.clotGroup.position.set(p[0], p[1], p[2]);
+    this.clotGroup.visible = true;
   }
 
   render(): void {

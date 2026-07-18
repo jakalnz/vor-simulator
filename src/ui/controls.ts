@@ -11,6 +11,11 @@ export interface ControlsCallbacks {
   /** Toggles one (canal, side)'s function scale between normal (1) and absent (0) --
    * simulating unilateral/selective vestibular loss for that canal. */
   onToggleCanalFunction: (canal: CanalType, side: EarSide, enabled: boolean) => void;
+  /** Selects which single (canal, side) has canalithiasis (free-floating debris) BPPV
+   * enabled, or null for none. Single-selection (radio-style), not per-canal toggles like
+   * onToggleCanalFunction -- this minimal-slice model only supports one affected
+   * canal+side at a time. */
+  onBppvSelectionChange: (selection: { canal: CanalType; side: EarSide } | null) => void;
 }
 
 const CANAL_LABELS: Record<CanalType, string> = {
@@ -78,7 +83,54 @@ export class Controls {
         pathologyToggles.push(row);
       }
     }
-    const { button: pathologyButton } = this.makePopoverButton('Canal function', pathologyToggles);
+    // BPPV (canalithiasis) selection, nested in the same "Pathology" popover as the
+    // canal-function toggles above rather than a separate control -- both are pathology
+    // concepts and users asked for one control surface, not two (see plan). Radio-style
+    // (a plain <input type=radio> group, one shared name) since this minimal-slice model
+    // only supports a single affected canal+side at a time, unlike the independent
+    // per-canal checkboxes above.
+    const bppvDivider = document.createElement('div');
+    bppvDivider.className = 'popover-section-label';
+    bppvDivider.textContent = 'BPPV (canalithiasis)';
+
+    const bppvRadios: HTMLElement[] = [];
+    const noneRow = document.createElement('label');
+    noneRow.className = 'canal-function-row';
+    const noneRadio = document.createElement('input');
+    noneRadio.type = 'radio';
+    noneRadio.name = 'bppv-selection';
+    noneRadio.checked = true;
+    noneRadio.addEventListener('change', () => {
+      if (noneRadio.checked) callbacks.onBppvSelectionChange(null);
+    });
+    const noneText = document.createElement('span');
+    noneText.textContent = 'None';
+    noneRow.append(noneRadio, noneText);
+    bppvRadios.push(noneRow);
+
+    for (const side of ALL_EAR_SIDES) {
+      for (const canal of ALL_CANAL_TYPES) {
+        const row = document.createElement('label');
+        row.className = 'canal-function-row';
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = 'bppv-selection';
+        const sideLabel = side === 'right' ? 'Right' : 'Left';
+        radio.addEventListener('change', () => {
+          if (radio.checked) callbacks.onBppvSelectionChange({ canal, side });
+        });
+        const text = document.createElement('span');
+        text.textContent = `${sideLabel} ${CANAL_LABELS[canal]}`;
+        row.append(radio, text);
+        bppvRadios.push(row);
+      }
+    }
+
+    const { button: pathologyButton } = this.makePopoverButton('Pathology', [
+      ...pathologyToggles,
+      bppvDivider,
+      ...bppvRadios,
+    ]);
 
     const resetBtn = document.createElement('button');
     resetBtn.textContent = 'Reset';
