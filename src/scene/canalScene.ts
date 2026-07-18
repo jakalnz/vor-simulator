@@ -191,9 +191,14 @@ export class CanalScene {
       this.ampullaMaterials[canal] = canalColorMaterial(CANAL_TINT[canal] ?? 0xdfeaf2, AMPULLA_OPACITY);
     }
     const CONNECTOR_GLASS = glassMaterial(0xb87fa0, 0.18);
-    const COMMON_CRUS_GLASS = glassMaterial(0xb08fe0, 0.28);
-    const UTRICLE_GLASS = glassMaterial(0xd8c9a8, 0.16);
-    const SACCULE_GLASS = glassMaterial(0x7fd6c9, 0.2);
+    // Common crus is anatomically just the shared trunk where the canal ducts join --
+    // tinted the same as the ducts' resting color (COLOR_REST) so it reads as a
+    // continuation of the canal, not a distinct structure.
+    const COMMON_CRUS_GLASS = glassMaterial(COLOR_REST.getHex(), 0.28);
+    // Utricle/saccule tinted to match the otoconia clot (CLOT_COLOR) -- these are the
+    // otolith organs where the clot's otoconia debris actually originates.
+    const UTRICLE_GLASS = glassMaterial(CLOT_COLOR, 0.16);
+    const SACCULE_GLASS = glassMaterial(CLOT_COLOR, 0.2);
 
     const loadInto = async (url: string, material: THREE.Material) => {
       try {
