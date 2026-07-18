@@ -194,34 +194,10 @@ body {
   text-align: center;
 }
 
-/* Debug telemetry controls (see debug/telemetry.ts) -- deliberately understated, this
- * is a developer aid for retuning release thresholds against real sensor data, not a
- * user-facing feature. */
-.about-debug {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border-faint, rgba(128, 128, 128, 0.25));
-}
-
-.about-debug .about-pill:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-#debug-record-status {
-  font-size: 0.65rem;
-  color: var(--text-faint);
-}
-
-/* Ear/canal/pathology/debris-side toggles, moved out of the control bar's own row and
- * into this popup (see controls.ts's variantButton/variantPopover) -- fixed/appended to
- * <body> for the same overflow:hidden-escaping reason as .about-popover, positioned
- * ABOVE its trigger button (via JS-set bottom, not top) since the control bar sits at
- * the page's bottom edge. */
+/* Popover content (mode picker, per-canal function toggles) -- appended to <body> for
+ * the same overflow:hidden-escaping reason as .about-popover, positioned ABOVE its
+ * trigger button (via JS-set bottom, not top) since the control bar sits at the page's
+ * bottom edge. See controls.ts's makePopoverButton. */
 /* display:flex only applies when NOT [hidden] -- an unconditional `display: flex` here
  * would be an author-stylesheet rule at the same specificity as the UA stylesheet's own
  * `[hidden] { display: none }`, and author rules win ties regardless of source order, so
@@ -247,46 +223,6 @@ body {
 .variant-popover button {
   width: 100%;
   text-align: left;
-}
-
-/* Persistent readout of the current ear/pathology/debris-side selection, overlaid on
- * the canal canvas itself -- now that those controls live behind the "BPPV Variant"
- * popup (see .variant-popover) rather than always-visible inline buttons, this keeps the
- * current selection legible at a glance without opening it. Offset right of the
- * top-left scope-reticle tick (.canvas-wrap::before, a 14px mark from x=6 to x=20) so
- * the two don't overlap. */
-.canal-variant-label {
-  position: absolute;
-  top: 8px;
-  left: 26px;
-  z-index: 4;
-  background: var(--overlay);
-  color: var(--text-dim);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
-  padding: 3px 9px;
-  font-family: 'SFMono-Regular', Consolas, ui-monospace, monospace;
-  font-size: 0.62rem;
-  letter-spacing: 0.03em;
-  max-width: calc(100% - 40px);
-  pointer-events: none;
-}
-
-/* Each line (variant, then mode -- see controls.ts's variantLine/modeLine) truncates
- * independently, since they're separate block children now, not one line of text. */
-.canal-variant-label > div {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Second line: the current playback mode (see controls.ts's modeLine), under the
- * ear/pathology line -- dimmer and slightly smaller so it reads as secondary/contextual
- * info, not equal in weight to the variant selection above it. */
-.canal-variant-label__mode {
-  color: var(--text-faint);
-  font-size: 0.9em;
-  margin-top: 1px;
 }
 
 /*
@@ -347,22 +283,6 @@ body {
   gap: 4px;
 }
 
-.inline-toggle {
-  background: var(--bg);
-  color: var(--text-dim);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
-  padding: 3px 8px;
-  font-size: 0.7rem;
-  cursor: pointer;
-  transition: border-color 0.15s ease, color 0.15s ease;
-}
-
-.inline-toggle:hover {
-  border-color: var(--accent);
-  color: var(--text);
-}
-
 .view-panel canvas {
   flex: 1 1 auto;
   width: 100%;
@@ -419,52 +339,61 @@ body {
   border-right: 1.5px solid var(--accent);
 }
 
-/* Celebratory banner shown once when the otoconia clot settles in the utricle (see
- * main.ts's clearedIntoUtricle rising-edge check) -- fades in/out rather than just
- * appearing/disappearing so it reads as a transient toast, not a persistent label.
- * .cleared-toast--warning (see below) reuses this for the short-arm re-entry case. */
-.cleared-toast {
+/* Eye/canal panels now each show both ears/eyes side by side (see index.html's
+ * .split-pane children) -- a simple even flex split, each pane keeping its own small
+ * label above the canvas so it's clear which side is which. */
+.canvas-wrap--split {
+  display: flex;
+  gap: 4px;
+}
+
+.split-pane {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.split-pane canvas {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: block;
+}
+
+.split-pane-label {
   position: absolute;
-  top: 10px;
-  left: 50%;
-  max-width: 90%;
-  transform: translateX(-50%) translateY(-6px);
+  top: 4px;
+  left: 6px;
+  z-index: 4;
+  font-family: 'SFMono-Regular', Consolas, ui-monospace, monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.03em;
+  color: var(--text-faint);
   background: var(--overlay);
-  border: 1px solid #3f9d5f;
-  color: #a8e8bb;
-  border-radius: 999px;
-  padding: 6px 14px;
-  font-size: 0.78rem;
-  font-weight: 600;
-  text-align: center;
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
   pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.25s ease, transform 0.25s ease;
-  z-index: 5;
 }
 
-/* Short-arm re-entry (see main.ts) is a complication, not a success -- amber/red
- * instead of green so the two toasts are never confused for each other even if shown
- * in quick succession (e.g. clearing, then re-entering shortly after). */
-.cleared-toast--warning {
-  border-color: #c97a2e;
-  color: #f0c896;
+/* Per-canal-per-ear function toggles (see controls.ts's pathologyToggles) -- a plain
+ * checkbox row per (canal, side), listed in the "Canal function" popover. */
+.canal-function-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: 2px 4px;
 }
 
-/* The light-on-dark toast text (#a8e8bb/#f0c896 above) has poor contrast against
- * --overlay's near-white light-theme background -- darker, more saturated variants
- * for readability there, same green/amber identity. */
-:root[data-theme='light'] .cleared-toast {
-  color: #1f7a3f;
-}
-
-:root[data-theme='light'] .cleared-toast--warning {
-  color: #9a5416;
-}
-
-.cleared-toast.show {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
+.canal-function-row input[type='checkbox'] {
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
 }
 
 /* A compact wrapping row, laid out in normal flow BELOW the canvas (not an absolute
@@ -695,11 +624,6 @@ body {
     padding: 4px 8px;
   }
 
-  .inline-toggle {
-    font-size: 0.62rem;
-    padding: 1px 5px;
-  }
-
   /* Canal panel's own chrome (header above, legend below) is pure DOM overhead around
    * the canvas -- shrinking it hands the freed height straight to the canvas, and the
    * fit-to-frame camera (see canalScene.ts) uses it, growing the model rather than
@@ -718,11 +642,11 @@ body {
     font-size: 0.6rem;
   }
 
-  .canal-variant-label {
-    top: 6px;
-    left: 22px;
-    padding: 1px 7px;
-    font-size: 0.54rem;
+  .split-pane-label {
+    top: 3px;
+    left: 4px;
+    padding: 0 5px;
+    font-size: 0.5rem;
   }
 
   /* max-height capped tighter than an earlier 34vh -- on a short phone screen that was

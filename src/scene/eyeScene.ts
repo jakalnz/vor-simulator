@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/examples/jsm/loaders/MTLLoader.js';
-import { EyeMovementComponents } from '../physics/vor';
+import { EyeMovementComponents } from '../physics/vorEngine';
 import { DEG2RAD } from '../physics/types';
 import { makeAmbientAndKeyLight, createRenderer, resizeRendererToDisplaySize } from './sceneUtils';
 import { resolveAssetUrl } from './assetPaths';

@@ -17,6 +17,10 @@ export function dot(a: Vec3, b: Vec3): number {
   return vec3.dot(a, b);
 }
 
+export function norm(a: Vec3): number {
+  return vec3.length(a);
+}
+
 export function cross(a: Vec3, b: Vec3): Vec3 {
   const out = vec3.create();
   vec3.cross(out, a, b);

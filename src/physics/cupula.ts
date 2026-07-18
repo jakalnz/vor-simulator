@@ -1,19 +1,19 @@
-import { KAPPA_FLOW, TAU_CUPULA } from './params';
-
 /**
- * Cupula deflection update: driven by endolymph flow (proportional to clot velocity,
- * not clot position), relaxing back toward neutral with time constant TAU_CUPULA.
- * Semi-implicit (backward Euler on the decay term) so it stays stable for any dt:
- *   beta_new = (beta_old + KAPPA_FLOW * dsdt * dt) / (1 + dt / TAU_CUPULA)
- * Fatigue and "nystagmus duration" clinical patterns fall out of this relaxation --
- * they are not scripted separately.
+ * Cupula deflection update: driven by endolymph flow, relaxing back toward neutral with
+ * time constant tau (the Steinhausen damped-torsion-pendulum model). Semi-implicit
+ * (backward Euler on the decay term) so it stays stable for any dt:
+ *   beta_new = (beta_old + flow * dt) / (1 + dt / tau)
+ * tau is a parameter (not a hard-coded constant) so the same tested primitive can serve
+ * different callers -- currently the head-velocity-driven VOR engine (see vorEngine.ts,
+ * physics/params.ts's TAU_CUPULA), previously (and potentially again, for a future
+ * debris-physics rebuild) driven by clot arc-velocity instead.
  */
-export function updateCupula(beta: number, dsdt: number, dt: number): number {
-  const driven = beta + KAPPA_FLOW * dsdt * dt;
-  return driven / (1 + dt / TAU_CUPULA);
+export function updateCupula(beta: number, flow: number, dt: number, tau: number): number {
+  const driven = beta + flow * dt;
+  return driven / (1 + dt / tau);
 }
 
-/** Relaxation with no driving flow, e.g. once the clot has cleared past the common crus. */
-export function relaxOnly(beta: number, dt: number): number {
-  return updateCupula(beta, 0, dt);
+/** Relaxation with no driving flow. */
+export function relaxOnly(beta: number, dt: number, tau: number): number {
+  return updateCupula(beta, 0, dt, tau);
 }
