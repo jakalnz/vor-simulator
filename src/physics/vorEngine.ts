@@ -132,8 +132,32 @@ export function stepVorEngine(
     }
   }
 
+  // eyeOmegaX/Y/Z are the raw HeadFrame components of the compensatory eye angular
+  // velocity vector (already anti-parallel to head angular velocity by construction --
+  // see contribScale's derivation above). Converting each to the clinical H/V/T sign
+  // convention eyeScene.ts expects ("verticalDeg positive = up", "torsionalDeg positive =
+  // CCW as seen from the front", "horizontalDeg positive = screen-right for a rightward
+  // head turn's compensation") requires checking each axis independently against that
+  // convention, NOT assuming the OLD single-canal debris-driven vor.ts's per-axis
+  // negation choices carry over -- that older eyeAngle was a fundamentally different
+  // quantity (gravity/debris-driven, run through its own e1/e2 handedness machinery), so
+  // its empirically-tuned negations don't necessarily apply to this head-velocity-driven
+  // vector. Re-derived directly from v = omega x r (HeadFrame +X anterior, +Y left,
+  // +Z superior) for all three axes:
+  //  - Horizontal (Z, yaw): a rightward head turn compensates toward HeadFrame +Y (left),
+  //    which -- via the mirrored examiner-view convention eyeScene.ts already uses --
+  //    reads as screen-right, matching "positive = screen-right". No negation needed.
+  //  - Torsional (X, roll): a right-ear-down head roll (positive omega_x) needs a CCW
+  //    (examiner-view) counter-roll to compensate, matching "positive = CCW". Needs a
+  //    negation (confirmed by direct derivation, not just carried over from old code).
+  //  - Vertical (Y, pitch): a nose-down head pitch (positive omega_y) produces gaze
+  //    compensation toward HeadFrame +Z (up) -- but the OLD code's un-negated n[1]
+  //    convention (carried over here originally) instead reported that as NEGATIVE
+  //    (down), causing the eyes to visually pitch WITH the head instead of against it
+  //    (reported by a live user: "when the head tilts down, the eyes tilt down"). Fixed
+  //    by negating: positive eyeAngleV now correctly means up.
   let eyeAngleT = state.eyeAngleT + -eyeOmegaX * dt;
-  let eyeAngleV = state.eyeAngleV + eyeOmegaY * dt;
+  let eyeAngleV = state.eyeAngleV + -eyeOmegaY * dt;
   let eyeAngleH = state.eyeAngleH + eyeOmegaZ * dt;
 
   if (Math.abs(eyeAngleT) > QUICK_PHASE_THRESHOLD) eyeAngleT -= Math.sign(eyeAngleT) * QUICK_PHASE_RESET_AMOUNT;

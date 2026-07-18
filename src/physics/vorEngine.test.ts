@@ -46,11 +46,51 @@ describe('stepVorEngine', () => {
     expect(peak.verticalDeg).toBeGreaterThan(0.2);
   });
 
+  it('nose-down pitch produces a COMPENSATORY (upward) eye response, not a same-direction one', () => {
+    // Regression test: HeadFrame +Y is left (interaural), so a rotation of +omega_y about
+    // it moves a forward-pointing (nose) vector toward -Z (down, via v = omega x r) --
+    // i.e. omega = (0, +1.5, 0) is a nose-DOWN pitch. A correct VOR keeps gaze fixed on a
+    // world point by rotating the eye UP relative to the head to compensate, which
+    // eyeScene.ts's convention represents as a POSITIVE verticalDeg. A prior bug (ported
+    // an eye-angle sign convention from the old single-canal debris-driven engine that
+    // didn't actually apply to this head-velocity-driven one) produced NEGATIVE
+    // verticalDeg here instead -- the eyes visually pitching WITH the head instead of
+    // against it, reported by a live user testing on a real device.
+    let state = initialVorEngineState();
+    // Short window: only the sign of the initial compensatory response matters here, not
+    // magnitude or later quick-phase resets.
+    let result;
+    for (let i = 0; i < Math.round(0.1 / DT); i++) {
+      result = stepVorEngine(state, v3(0, 1.5, 0), DT);
+      state = result.state;
+    }
+    expect(result!.eye.verticalDeg).toBeGreaterThan(0);
+  });
+
   it('pure roll produces a torsional response distinct from pure yaw/pitch', () => {
     const roll = runConstant([1.5, 0, 0], 1).peak;
     const yaw = runConstant([0, 0, 1.5], 1).peak;
     expect(roll.torsionalDeg).toBeGreaterThan(0.2);
     expect(roll.torsionalDeg).toBeGreaterThan(yaw.torsionalDeg * 3);
+  });
+
+  it('right-ear-down roll produces a COMPENSATORY (CCW) torsional response', () => {
+    // Regression coverage alongside the vertical-axis fix above: verified independently
+    // (not just carried over from old code) via v = omega x r. HeadFrame +X is anterior;
+    // a positive rotation about it (omega_x > 0) moves the right ear (at roughly
+    // HeadFrame -Y) toward -Z, i.e. downward -- a right-ear-down roll. A correct VOR
+    // counter-rolls the eye CCW (as seen from the front, eyeScene.ts's convention for
+    // positive torsionalDeg) to keep the retinal image upright. Unlike the vertical axis,
+    // this one was checked and found to already be correct (torsionalDeg's existing
+    // negation, inherited from the old engine, happens to still be right here) --
+    // asserted as a permanent regression test rather than left as a one-off manual check.
+    let state = initialVorEngineState();
+    let result;
+    for (let i = 0; i < Math.round(0.1 / DT); i++) {
+      result = stepVorEngine(state, v3(1.5, 0, 0), DT);
+      state = result.state;
+    }
+    expect(result!.eye.torsionalDeg).toBeGreaterThan(0);
   });
 
   it('opposite head velocities produce opposite-signed horizontal responses', () => {
