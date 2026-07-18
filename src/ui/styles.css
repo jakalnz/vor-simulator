@@ -389,6 +389,41 @@ body {
   pointer-events: none;
 }
 
+/* "Cleared into the utricle" notification toast (see main.ts's makeToast / the rising-
+ * edge check on canalithState.s >= sMax) -- fades in/out rather than just appearing/
+ * disappearing so it reads as a transient toast, not a persistent label. Anchored to its
+ * own .split-pane (position:relative), so it sits over that ear's own canvas only. */
+.cleared-toast {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  max-width: 90%;
+  transform: translateX(-50%) translateY(-6px);
+  background: var(--overlay);
+  border: 1px solid #3f9d5f;
+  color: #a8e8bb;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-align: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  z-index: 5;
+}
+
+/* The light-on-dark toast text (#a8e8bb above) has poor contrast against --overlay's
+ * near-white light-theme background -- a darker, more saturated variant for readability. */
+:root[data-theme='light'] .cleared-toast {
+  color: #1f7a3f;
+}
+
+.cleared-toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
 /* Per-canal-per-ear function toggles (see controls.ts's pathologyToggles) -- a plain
  * checkbox row per (canal, side), listed in the "Canal function" popover. */
 .canal-function-row {

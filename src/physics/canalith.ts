@@ -98,6 +98,12 @@ function buildPolyline(canal: CanalType, side: EarSide): DuctPolyline {
   // world position against the loaded duct mesh's own bounding box.
   const raw = EAR_ANATOMY.canals[canal].centerline;
   const controlPoints = raw.map((p) => (side === 'right' ? v3(p[0], p[1], p[2]) : mirrorPoint(p)));
+  // The raw centerline's last station is still ~5mm short of the utricle (it's the
+  // duct's own last sampled point, not the cavity it empties into) -- earAnatomy.json's
+  // whole coordinate frame is anchored at the utricle centroid (see its "anchor" field),
+  // so appending the origin as one more control point extends the modeled path the rest
+  // of the way into the utricle. The origin mirrors to itself, so this is side-invariant.
+  controlPoints.push(v3(0, 0, 0));
   const points = smoothCenterline(controlPoints);
   const cumulative = [0];
   for (let i = 1; i < points.length; i++) {

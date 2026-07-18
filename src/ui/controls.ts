@@ -1,6 +1,38 @@
 import { CanalType, EarSide, ALL_CANAL_TYPES, ALL_EAR_SIDES } from '../physics/canal';
 
-export type PlaybackMode = 'gyro' | 'mouse';
+export type PlaybackMode = 'maneuver' | 'gyro' | 'mouse';
+
+export type ManeuverKey =
+  | 'dixHallpike'
+  | 'semontDiagnostic'
+  | 'semontLiberatory'
+  | 'epley'
+  | 'rollTest'
+  | 'bbqRoll'
+  | 'zuma';
+
+/** Which scripted maneuvers are offered for each canal -- anterior canal BPPV is rare
+ * and provoked/treated the same way as posterior (same Dix-Hallpike-family positions),
+ * so it reuses the posterior list rather than getting its own. */
+const MANEUVERS_BY_CANAL: Record<CanalType, { key: ManeuverKey; label: string }[]> = {
+  posterior: [
+    { key: 'dixHallpike', label: 'Dix-Hallpike' },
+    { key: 'semontDiagnostic', label: 'Semont (diagnostic)' },
+    { key: 'semontLiberatory', label: 'Semont (liberatory)' },
+    { key: 'epley', label: 'Epley' },
+  ],
+  anterior: [
+    { key: 'dixHallpike', label: 'Dix-Hallpike' },
+    { key: 'semontDiagnostic', label: 'Semont (diagnostic)' },
+    { key: 'semontLiberatory', label: 'Semont (liberatory)' },
+    { key: 'epley', label: 'Epley' },
+  ],
+  horizontal: [
+    { key: 'rollTest', label: 'Supine roll test' },
+    { key: 'bbqRoll', label: 'BBQ roll' },
+    { key: 'zuma', label: 'Zuma (apogeotropic HC cupulolithiasis)' },
+  ],
+};
 
 export interface ControlsCallbacks {
   onReset: () => void;
@@ -16,6 +48,11 @@ export interface ControlsCallbacks {
    * onToggleCanalFunction -- this minimal-slice model only supports one affected
    * canal+side at a time. */
   onBppvSelectionChange: (selection: { canal: CanalType; side: EarSide } | null) => void;
+  onSelectManeuver: (key: ManeuverKey) => void;
+  onPlay: () => void;
+  onPause: () => void;
+  /** fraction is normalized 0..1 of the maneuver's total duration. */
+  onScrub: (fraction: number) => void;
 }
 
 const CANAL_LABELS: Record<CanalType, string> = {
@@ -36,8 +73,20 @@ export class Controls {
   private readonly gyroGroup: HTMLDivElement;
   private gyroEnabled = false;
 
+  private readonly maneuverSelect: HTMLSelectElement;
+  private readonly maneuverGroup: HTMLDivElement;
+  private readonly playBtn: HTMLButtonElement;
+  private readonly scrub: HTMLInputElement;
+  private readonly maneuverLabel: HTMLSpanElement;
+  private readonly scrubColumn: HTMLDivElement;
+  private scrubbing = false;
+  /** Repopulates the maneuver dropdown for a given canal -- assigned in the constructor
+   * (needs `callbacks` from the constructor's closure) and exposed via setManeuverCanal. */
+  private populateManeuverOptionsFn!: (canal: CanalType) => void;
+
   constructor(container: HTMLElement, callbacks: ControlsCallbacks, initialMode: PlaybackMode = 'mouse') {
     const MODE_OPTIONS: { value: PlaybackMode; label: string }[] = [
+      { value: 'maneuver', label: 'Scripted maneuver' },
       { value: 'mouse', label: 'Mouse-drag (desktop)' },
       { value: 'gyro', label: 'Gyroscope (phone)' },
     ];
@@ -117,7 +166,10 @@ export class Controls {
         radio.name = 'bppv-selection';
         const sideLabel = side === 'right' ? 'Right' : 'Left';
         radio.addEventListener('change', () => {
-          if (radio.checked) callbacks.onBppvSelectionChange({ canal, side });
+          if (radio.checked) {
+            callbacks.onBppvSelectionChange({ canal, side });
+            this.setManeuverCanal(canal);
+          }
         });
         const text = document.createElement('span');
         text.textContent = `${sideLabel} ${CANAL_LABELS[canal]}`;
@@ -165,6 +217,62 @@ export class Controls {
     this.gyroGroup.className = 'control-group';
     this.gyroGroup.append(this.gyroToggleBtn, this.gyroCalibrateBtn, this.gyroStatus);
 
+    // Scripted maneuver select + transport (Play/Pause + scrub) -- only meaningful in
+    // "maneuver" mode, since there's no scripted position to play/scrub through in
+    // gyro/mouse-drag mode (see updateModeVisibility).
+    this.maneuverSelect = document.createElement('select');
+    const populateManeuverOptions = (canal: CanalType): void => {
+      const previous = this.maneuverSelect.value as ManeuverKey | '';
+      this.maneuverSelect.innerHTML = MANEUVERS_BY_CANAL[canal]
+        .map((m) => `<option value="${m.key}">${m.label}</option>`)
+        .join('');
+      // Keep the previous selection if the new canal still offers it (e.g. switching
+      // between posterior and anterior, which share the same maneuver list), rather than
+      // always resetting to the first option.
+      const stillOffered = MANEUVERS_BY_CANAL[canal].some((m) => m.key === previous);
+      if (stillOffered) this.maneuverSelect.value = previous;
+      callbacks.onSelectManeuver(this.maneuverSelect.value as ManeuverKey);
+    };
+    populateManeuverOptions('posterior');
+    this.maneuverSelect.addEventListener('change', () =>
+      callbacks.onSelectManeuver(this.maneuverSelect.value as ManeuverKey)
+    );
+    this.populateManeuverOptionsFn = populateManeuverOptions;
+
+    this.playBtn = document.createElement('button');
+    this.playBtn.className = 'primary-btn';
+    this.playBtn.textContent = 'Play';
+    this.playBtn.addEventListener('click', () => {
+      if (this.playBtn.textContent === 'Pause') {
+        callbacks.onPause();
+        this.setPlayingLabel(false);
+      } else {
+        callbacks.onPlay();
+        this.setPlayingLabel(true);
+      }
+    });
+
+    this.maneuverLabel = document.createElement('span');
+    this.maneuverLabel.textContent = 'Seated upright';
+
+    this.scrub = document.createElement('input');
+    this.scrub.type = 'range';
+    this.scrub.min = '0';
+    this.scrub.max = '1';
+    this.scrub.step = '0.001';
+    this.scrub.value = '0';
+    this.scrub.addEventListener('pointerdown', () => (this.scrubbing = true));
+    this.scrub.addEventListener('pointerup', () => (this.scrubbing = false));
+    this.scrub.addEventListener('input', () => callbacks.onScrub(parseFloat(this.scrub.value)));
+
+    this.scrubColumn = document.createElement('div');
+    this.scrubColumn.className = 'scrub-column';
+    this.scrubColumn.append(this.maneuverLabel, this.scrub);
+
+    this.maneuverGroup = document.createElement('div');
+    this.maneuverGroup.className = 'control-group';
+    this.maneuverGroup.append(this.maneuverSelect, this.playBtn, this.scrubColumn);
+
     this.updateModeVisibility(initialMode);
 
     const contextRow = document.createElement('div');
@@ -173,9 +281,16 @@ export class Controls {
 
     const playbackRow = document.createElement('div');
     playbackRow.className = 'control-row';
-    playbackRow.append(this.gyroGroup, this.debug);
+    playbackRow.append(this.maneuverGroup, this.gyroGroup, this.debug);
 
     container.append(contextRow, playbackRow);
+  }
+
+  /** Repopulates the maneuver dropdown for the given canal (posterior/anterior share one
+   * list, horizontal has its own) -- called whenever the BPPV selection's canal changes,
+   * so the offered maneuvers always match the currently-selected pathology. */
+  setManeuverCanal(canal: CanalType): void {
+    this.populateManeuverOptionsFn(canal);
   }
 
   /**
@@ -217,6 +332,7 @@ export class Controls {
 
   private updateModeVisibility(mode: PlaybackMode): void {
     this.gyroGroup.style.display = mode === 'gyro' ? '' : 'none';
+    this.maneuverGroup.style.display = mode === 'maneuver' ? '' : 'none';
   }
 
   private updateGyroToggleLabel(): void {
@@ -241,5 +357,17 @@ export class Controls {
 
   setDebugReadout(text: string): void {
     this.debug.textContent = text;
+  }
+
+  /** fraction is normalized 0..1 of the maneuver's total duration. Skipped while the
+   * user is actively dragging the scrub handle (this.scrubbing) so the live physics
+   * update doesn't fight the user's own drag position. */
+  setProgress(fraction: number, label: string): void {
+    if (!this.scrubbing) this.scrub.value = String(fraction);
+    this.maneuverLabel.textContent = label;
+  }
+
+  setPlayingLabel(playing: boolean): void {
+    this.playBtn.textContent = playing ? 'Pause' : 'Play';
   }
 }

@@ -14,7 +14,20 @@ import { EyeScene } from './scene/eyeScene';
 import { CanalScene } from './scene/canalScene';
 import { HeadScene } from './scene/headScene';
 
-import { Controls, PlaybackMode } from './ui/controls';
+import { Controls, PlaybackMode, ManeuverKey } from './ui/controls';
+import { Maneuver } from './maneuvers/types';
+import { ManeuverPlayer } from './maneuvers/playback';
+import { dixHallpikeRight, dixHallpikeLeft } from './maneuvers/dixHallpike';
+import {
+  semontDiagnosticRight,
+  semontDiagnosticLeft,
+  semontLiberatoryRight,
+  semontLiberatoryLeft,
+} from './maneuvers/semont';
+import { epleyRight, epleyLeft } from './maneuvers/epley';
+import { rollTestRight, rollTestLeft } from './maneuvers/rollTest';
+import { bbqRollRight, bbqRollLeft } from './maneuvers/bbqRoll';
+import { zumaRight, zumaLeft } from './maneuvers/zuma';
 import { VngTrace } from './ui/vngTrace';
 import { CanalHexPlot } from './ui/canalHexPlot';
 import { keepScreenAwake } from './ui/wakeLock';
@@ -33,6 +46,38 @@ const vngCanvas = document.getElementById('vng-canvas') as HTMLCanvasElement;
 const controlsContainer = document.getElementById('controls') as HTMLDivElement;
 const themeToggleBtn = document.getElementById('theme-toggle') as HTMLButtonElement;
 themeToggleBtn.addEventListener('click', () => toggleTheme());
+
+/**
+ * Small one-off notification toast (fade in, auto-hide after a few seconds), one per
+ * ear panel -- fires once on the rising edge of the debris clearing into the utricle
+ * (see stepPhysicsOnce's clearedIntoUtricle check), not a persistent status label.
+ */
+function makeToast(elementId: string) {
+  const el = document.getElementById(elementId) as HTMLDivElement;
+  let hideTimer: ReturnType<typeof setTimeout> | undefined;
+  return {
+    show(): void {
+      el.hidden = false;
+      // Force a layout flush before adding the class -- otherwise the browser can
+      // coalesce the hidden->visible and opacity 0->1 changes into a single paint,
+      // skipping the fade-in transition entirely.
+      void el.offsetWidth;
+      el.classList.add('show');
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => {
+        el.classList.remove('show');
+        hideTimer = setTimeout(() => (el.hidden = true), 300);
+      }, 3500);
+    },
+    hideImmediately(): void {
+      clearTimeout(hideTimer);
+      el.classList.remove('show');
+      el.hidden = true;
+    },
+  };
+}
+const clearedToastLeft = makeToast('canal-cleared-toast-left');
+const clearedToastRight = makeToast('canal-cleared-toast-right');
 
 // Fullscreen (Fullscreen API): on mobile, this hides the browser's own address bar/nav
 // chrome, handing that vertical space to the viewport. Hidden entirely where unsupported
@@ -135,8 +180,67 @@ const IS_MOBILE_SCREEN = window.matchMedia('(max-width: 760px)').matches;
 let mode: PlaybackMode = IS_MOBILE_SCREEN ? 'gyro' : 'mouse';
 let canalFunction: CanalFunction = normalCanalFunction();
 
+// Scripted maneuver playback (Dix-Hallpike/Epley/Semont/BBQ-roll/Zuma/roll-test) --
+// drives head orientation the same way live gyro/mouse-drag do, via the shared
+// OrientationSource interface (see maneuverSource below), so stepPhysicsOnce doesn't
+// need to know which kind of source is active.
+const MANEUVERS_BY_SIDE_AND_KEY: Record<EarSide, Record<ManeuverKey, Maneuver>> = {
+  right: {
+    dixHallpike: dixHallpikeRight,
+    semontDiagnostic: semontDiagnosticRight,
+    semontLiberatory: semontLiberatoryRight,
+    epley: epleyRight,
+    rollTest: rollTestRight,
+    bbqRoll: bbqRollRight,
+    zuma: zumaRight,
+  },
+  left: {
+    dixHallpike: dixHallpikeLeft,
+    semontDiagnostic: semontDiagnosticLeft,
+    semontLiberatory: semontLiberatoryLeft,
+    epley: epleyLeft,
+    rollTest: rollTestLeft,
+    bbqRoll: bbqRollLeft,
+    zuma: zumaLeft,
+  },
+};
+let maneuverKey: ManeuverKey = 'dixHallpike';
+const maneuverPlayer = new ManeuverPlayer(dixHallpikeRight);
+// Thin OrientationSource adapter -- ManeuverPlayer always has a definite orientation
+// (never null) and has no real sample timestamp of its own (it recomputes/applies its
+// orientation every physics tick, same as mouse-drag), so sampleTimestampMs is omitted.
+const maneuverSource: OrientationSource = {
+  currentOrientation: () => maneuverPlayer.currentOrientation(),
+};
+
 function activeOrientationSource(): OrientationSource {
-  return mode === 'gyro' ? gyroSource : mouseDragSource;
+  return mode === 'gyro' ? gyroSource : mode === 'maneuver' ? maneuverSource : mouseDragSource;
+}
+
+// BPPV (canalithiasis) selection -- see physics/canalith.ts. The single (canal, side)
+// currently modeled as having free-floating debris (null = no BPPV, the default), set
+// via the Controls "Pathology" popover's BPPV radio group. Declared here (ahead of the
+// Controls construction below, and ahead of the rest of the physics state further down)
+// because Controls' constructor synchronously calls onSelectManeuver once while
+// populating its maneuver dropdown, which reaches applyManeuver's read of
+// bppvSelection immediately -- a `let` declared any later would still be in its
+// temporal dead zone at that point (confirmed live: threw "Cannot access
+// 'bppvSelection' before initialization").
+let bppvSelection: { canal: CanalType; side: EarSide } | null = null;
+
+/** Rebuilds the active maneuver from the current key + the BPPV-selected side (defaults
+ * to 'right' if no BPPV side is selected yet, since a maneuver still needs some side to
+ * be parametrized by). */
+function applyManeuver(): void {
+  const side = bppvSelection?.side ?? 'right';
+  maneuverPlayer.setManeuver(MANEUVERS_BY_SIDE_AND_KEY[side][maneuverKey]);
+  // controls itself isn't constructed yet the FIRST time this runs -- Controls'
+  // constructor synchronously fires its own onSelectManeuver callback once while
+  // populating the maneuver dropdown, which reaches here before `new Controls(...)`
+  // has returned (confirmed live: an unguarded `controls.setPlayingLabel` call here
+  // threw "Cannot read properties of undefined" at construction time). Harmless to skip
+  // that first call -- main.ts calls applyManeuver() again right after construction.
+  controls?.setPlayingLabel(false);
 }
 
 /**
@@ -156,7 +260,12 @@ function enableGyro(): void {
   });
 }
 
-const controls = new Controls(
+// Declared (uninitialized) before construction, not `const controls = new Controls(...)`
+// directly -- Controls' own constructor synchronously calls back into applyManeuver
+// (see its doc comment), which reads this variable, so it must already be out of its
+// temporal dead zone (even if still `undefined`) by the time that happens.
+let controls: Controls;
+controls = new Controls(
   controlsContainer,
   {
     onReset: () => resetPhysics(),
@@ -181,10 +290,23 @@ const controls = new Controls(
     onBppvSelectionChange: (selection) => {
       bppvSelection = selection;
       canalithState = initialCanalithState();
+      clearedToastLeft.hideImmediately();
+      clearedToastRight.hideImmediately();
+      wasClearedIntoUtricle = false;
+      controls.setManeuverCanal(selection?.canal ?? 'posterior');
+      applyManeuver();
     },
+    onSelectManeuver: (key: ManeuverKey) => {
+      maneuverKey = key;
+      applyManeuver();
+    },
+    onPlay: () => maneuverPlayer.play(),
+    onPause: () => maneuverPlayer.pause(),
+    onScrub: (fraction: number) => maneuverPlayer.scrubTo(fraction * maneuverPlayer.duration),
   },
   mode
 );
+applyManeuver();
 
 // Best-effort auto-start on phone-sized screens (see IS_MOBILE_SCREEN/enableGyro) --
 // works on Android/desktop (no permission prompt to begin with), silently falls back to
@@ -192,14 +314,14 @@ const controls = new Controls(
 // user-gesture handler, not page load).
 if (IS_MOBILE_SCREEN) enableGyro();
 
-// Physics state.
+// Physics state (bppvSelection declared earlier, ahead of the Controls construction --
+// see its own doc comment).
 let vorState: VorEngineState = initialVorEngineState();
-// BPPV (canalithiasis) state -- see physics/canalith.ts. bppvSelection is the single
-// (canal, side) currently modeled as having free-floating debris (null = no BPPV, the
-// default), set via the Controls "Pathology" popover's BPPV radio group.
-let bppvSelection: { canal: CanalType; side: EarSide } | null = null;
 let canalithState: CanalithState = initialCanalithState();
 let lastDebrisArcFraction = 0;
+/** Tracks the previous tick's cleared-into-utricle state so the toast fires once on the
+ * rising edge (debris just settled in the utricle), not every tick while it stays there. */
+let wasClearedIntoUtricle = false;
 let lastQHead: Quat = activeOrientationSource().currentOrientation() ?? [0, 0, 0, 1];
 let simulationTimeSeconds = 0;
 // Angular-velocity tracking: needs the TRUE elapsed time between orientation samples,
@@ -213,6 +335,12 @@ let prevSampleTimestampMs: number | null = null;
 function resetPhysics(): void {
   vorState = initialVorEngineState();
   canalithState = initialCanalithState();
+  wasClearedIntoUtricle = false;
+  clearedToastLeft.hideImmediately();
+  clearedToastRight.hideImmediately();
+  maneuverPlayer.reset();
+  maneuverPlayer.pause();
+  controls.setPlayingLabel(false);
   simulationTimeSeconds = 0;
   prevQHeadForVelocity = activeOrientationSource().currentOrientation() ?? lastQHead;
   prevSampleTimestampMs = activeOrientationSource().sampleTimestampMs?.() ?? null;
@@ -250,6 +378,8 @@ function stepPhysicsOnce(dt: number): void {
   prevQHeadForVelocity = qHead;
   lastHeadAngularVelocity = [omegaBody[0], omegaBody[1], omegaBody[2]];
 
+  if (mode === 'maneuver') maneuverPlayer.tick(dt);
+
   let debrisFlow: Partial<PerCanalSide<number>> | undefined;
   if (bppvSelection) {
     // Gravity direction in HeadFrame this tick: qHead maps head->world (see
@@ -261,7 +391,16 @@ function stepPhysicsOnce(dt: number): void {
     const stepResult = stepCanalith(canalithState, canal, side, gHead, dt);
     canalithState = stepResult.state;
     debrisFlow = { [canal]: { [side]: stepResult.flow } } as Partial<PerCanalSide<number>>;
-    lastDebrisArcFraction = canalithState.s / sMax(canal, side);
+    const max = sMax(canal, side);
+    lastDebrisArcFraction = canalithState.s / max;
+
+    // Rising edge only -- fires once when the debris settles into the utricle, not on
+    // every subsequent tick while it stays there (see wasClearedIntoUtricle's doc comment).
+    const clearedIntoUtricle = canalithState.s >= max;
+    if (clearedIntoUtricle && !wasClearedIntoUtricle) {
+      (side === 'left' ? clearedToastLeft : clearedToastRight).show();
+    }
+    wasClearedIntoUtricle = clearedIntoUtricle;
   }
 
   const result = stepVorEngine(vorState, omegaBody, dt, canalFunction, undefined, debrisFlow);
@@ -321,6 +460,12 @@ function renderFrame(): void {
       : null
   );
   headScene.setOrientation(lastQHead);
+
+  if (mode === 'maneuver') {
+    const fraction = maneuverPlayer.duration > 0 ? maneuverPlayer.elapsedSeconds / maneuverPlayer.duration : 0;
+    controls.setProgress(fraction, maneuverPlayer.currentLabel);
+    controls.setPlayingLabel(maneuverPlayer.isPlaying);
+  }
 
   eyeSceneLeft.render();
   eyeSceneRight.render();
