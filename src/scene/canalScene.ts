@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { CanalType, EarSide } from '../physics/canal';
 import { Quat } from '../physics/types';
-import { FIRING_BASELINE_HZ, FIRING_CEILING_HZ } from '../physics/params';
+import { FIRING_BASELINE_HZ } from '../physics/params';
 import {
   toThreeQuaternion,
   makeAmbientAndKeyLight,
@@ -38,15 +38,32 @@ interface EarAnatomyData {
 }
 const EAR_ANATOMY = earAnatomyData as unknown as EarAnatomyData;
 
-// Per-canal tint for the loaded real duct/ampulla meshes -- the resting-color baseline
-// before setFiringRates lerps toward excited (red) / inhibited (blue).
-const CANAL_TINT: Record<CanalType, number> = { posterior: 0xe0507a, anterior: 0x4aa3e0, horizontal: 0x5fd17a };
+// Per-canal tint used ONLY while loading (a neutral placeholder distinguishing the 3
+// canal shapes before the first setFiringRates call lands) -- once firing rates are
+// flowing, the rest color is a uniform neutral grey (see COLOR_REST) so excitation (red)
+// and inhibition (blue) read unambiguously. An earlier version tinted each canal's
+// resting color by type (posterior pink, anterior blue, horizontal green) to also serve
+// as an anatomical legend -- rejected: anterior's resting blue was visually
+// indistinguishable from "inhibited" blue, and posterior's resting pink was too close to
+// "excited" red, defeating the whole point of the color coding. Canal identity is instead
+// read from the ring's real anatomical shape/position (see the legend's ring outlines).
+const CANAL_TINT: Record<CanalType, number> = { posterior: 0xdfeaf2, anterior: 0xdfeaf2, horizontal: 0xdfeaf2 };
 
 const DUCT_OPACITY = 0.4;
 const AMPULLA_OPACITY = 0.6;
 
+const COLOR_REST = new THREE.Color(0x9aa3ab);
 const COLOR_INHIBITED = new THREE.Color(0x1a5fb4);
 const COLOR_EXCITED = new THREE.Color(0xe01b24);
+/**
+ * Firing-rate delta (Hz, from baseline) at which the excite/inhibit color reaches FULL
+ * saturation. Deliberately much smaller than the physiological ceiling/floor's full range
+ * (FIRING_CEILING_HZ - FIRING_BASELINE_HZ = 310Hz, FIRING_BASELINE_HZ = 90Hz) -- lerping
+ * over that full range meant an ordinary moderate head turn (tens of Hz of delta) barely
+ * nudged the color, reading as "no visible change" against the base tint. This value is a
+ * visualization choice (how sensitive the color should look), not a physiological one.
+ */
+const COLOR_SATURATION_HZ = 60;
 
 /**
  * One ear's real-anatomy labyrinth (all 3 canal ducts + ampullae, common crus, utricle,
@@ -189,25 +206,31 @@ export class CanalScene {
 
   /**
    * Colors each canal's duct+ampulla mesh by its current firing rate (Hz): baseline
-   * (~FIRING_BASELINE_HZ) reads as this canal's own resting tint, rising toward
-   * FIRING_CEILING_HZ lerps toward red (excited), dropping toward 0 lerps toward blue
-   * (inhibited). Imports the baseline/ceiling from physics/params.ts rather than a second
-   * hardcoded copy, so this stays consistent with the physics engine's own scale.
+   * (~FIRING_BASELINE_HZ) reads as neutral grey, rising above baseline lerps toward red
+   * (excited), dropping below lerps toward blue (inhibited) -- saturating at
+   * +-COLOR_SATURATION_HZ from baseline, not at the physiological floor/ceiling (see that
+   * constant's doc comment for why). FIRING_BASELINE_HZ is still imported from
+   * physics/params.ts (not a second hardcoded copy) so the REST point stays consistent
+   * with the physics engine's own scale, even though the saturation RANGE around it is a
+   * separate visualization choice.
+   *
+   * Drives BOTH .color (the lit albedo) AND .emissive (self-illumination) with the same
+   * value, not just .color: these materials are glassy (high clearcoat, low roughness,
+   * transparent) so under this scene's lighting, perceived surface color is dominated by
+   * specular highlights reflecting the (white) key light, not the albedo -- confirmed
+   * live (material.color read back as pure 0xe01b24 red while the rendered duct still
+   * looked pale/grey). Emissive isn't subject to that lighting-dependent washout, so it's
+   * what actually makes the excitation/inhibition color visible.
    */
   setFiringRates(rates: Record<CanalType, number>): void {
     for (const canal of Object.keys(rates) as CanalType[]) {
       const hz = rates[canal];
-      const restColor = new THREE.Color(CANAL_TINT[canal] ?? 0xdfeaf2);
-      let color: THREE.Color;
-      if (hz >= FIRING_BASELINE_HZ) {
-        const t = Math.max(0, Math.min(1, (hz - FIRING_BASELINE_HZ) / (FIRING_CEILING_HZ - FIRING_BASELINE_HZ)));
-        color = restColor.clone().lerp(COLOR_EXCITED, t);
-      } else {
-        const t = Math.max(0, Math.min(1, (FIRING_BASELINE_HZ - hz) / FIRING_BASELINE_HZ));
-        color = restColor.clone().lerp(COLOR_INHIBITED, t);
-      }
+      const t = Math.max(-1, Math.min(1, (hz - FIRING_BASELINE_HZ) / COLOR_SATURATION_HZ));
+      const color = t >= 0 ? COLOR_REST.clone().lerp(COLOR_EXCITED, t) : COLOR_REST.clone().lerp(COLOR_INHIBITED, -t);
       this.ductMaterials[canal]?.color.copy(color);
+      this.ductMaterials[canal]?.emissive.copy(color);
       this.ampullaMaterials[canal]?.color.copy(color);
+      this.ampullaMaterials[canal]?.emissive.copy(color);
     }
   }
 

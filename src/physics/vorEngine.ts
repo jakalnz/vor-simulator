@@ -3,7 +3,15 @@ import { CanalType, EarSide, CANAL_PLANE_NORMAL, AMPULLOFUGAL_IS_EXCITATORY, AMP
 import { updateCupula } from './cupula';
 import { firingRate, FiringRateParams } from './firingRate';
 import { CanalFunction, scaleFiringDelta, normalCanalFunction } from './pathology';
-import { TAU_CUPULA, QUICK_PHASE_THRESHOLD, QUICK_PHASE_RESET_AMOUNT, GAIN_VOR_FIRING } from './params';
+import {
+  TAU_CUPULA,
+  QUICK_PHASE_THRESHOLD,
+  QUICK_PHASE_RESET_AMOUNT,
+  GAIN_VOR_FIRING,
+  FIRING_BASELINE_HZ,
+  FIRING_CEILING_HZ,
+  FIRING_GAIN_HZ_PER_RAD_S,
+} from './params';
 
 export type PerCanalSide<T> = Record<CanalType, Record<EarSide, T>>;
 
@@ -46,9 +54,9 @@ function canalExcitationSign(canal: CanalType, side: EarSide): 1 | -1 {
 }
 
 const DEFAULT_FIRING_PARAMS: FiringRateParams = {
-  baselineHz: 90,
-  ceilingHz: 400,
-  gainHzPerRadS: 20,
+  baselineHz: FIRING_BASELINE_HZ,
+  ceilingHz: FIRING_CEILING_HZ,
+  gainHzPerRadS: FIRING_GAIN_HZ_PER_RAD_S,
 };
 
 export interface VorEngineParams {
