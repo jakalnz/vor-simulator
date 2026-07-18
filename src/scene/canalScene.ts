@@ -49,8 +49,8 @@ const EAR_ANATOMY = earAnatomyData as unknown as EarAnatomyData;
 // read from the ring's real anatomical shape/position (see the legend's ring outlines).
 const CANAL_TINT: Record<CanalType, number> = { posterior: 0xdfeaf2, anterior: 0xdfeaf2, horizontal: 0xdfeaf2 };
 
-const DUCT_OPACITY = 0.4;
-const AMPULLA_OPACITY = 0.6;
+const DUCT_OPACITY = 0.55;
+const AMPULLA_OPACITY = 0.75;
 
 const COLOR_REST = new THREE.Color(0x9aa3ab);
 const COLOR_INHIBITED = new THREE.Color(0x1a5fb4);
@@ -96,6 +96,10 @@ export class CanalScene {
     THREE.MeshPhysicalMaterial
   >;
   private boundingSphere: { center: THREE.Vector3; radius: number } | null = null;
+  /** Canvas drawing-buffer size (px) the camera was last fit to -- see render()'s resize
+   * check. Starts at 0 so the very first render after the mesh loads always fits. */
+  private lastFitWidth = 0;
+  private lastFitHeight = 0;
 
   constructor(canvas: HTMLCanvasElement, private readonly side: EarSide) {
     this.renderer = createRenderer(canvas);
@@ -131,10 +135,29 @@ export class CanalScene {
         depthWrite: false,
         side: THREE.DoubleSide,
       });
+    // Separate, LESS glossy/more opaque material factory for the per-canal
+    // excite/inhibit-colored meshes specifically -- a high clearcoat (near-mirror
+    // specular) throws a bright white highlight across the surface that visually competes
+    // with the emissive excite/inhibit color underneath (reported live: colors still hard
+    // to see even after driving .emissive). The other, purely decorative context meshes
+    // (utricle/connector/common crus/saccule below) don't carry a live signal, so they
+    // keep the glassier look.
+    const canalColorMaterial = (color: number, opacity: number) =>
+      new THREE.MeshPhysicalMaterial({
+        color,
+        emissive: color,
+        transparent: true,
+        opacity,
+        roughness: 0.35,
+        metalness: 0,
+        clearcoat: 0.1,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
 
     for (const canal of Object.keys(EAR_ANATOMY.canals) as CanalType[]) {
-      this.ductMaterials[canal] = glassMaterial(CANAL_TINT[canal] ?? 0xdfeaf2, DUCT_OPACITY);
-      this.ampullaMaterials[canal] = glassMaterial(CANAL_TINT[canal] ?? 0xdfeaf2, AMPULLA_OPACITY);
+      this.ductMaterials[canal] = canalColorMaterial(CANAL_TINT[canal] ?? 0xdfeaf2, DUCT_OPACITY);
+      this.ampullaMaterials[canal] = canalColorMaterial(CANAL_TINT[canal] ?? 0xdfeaf2, AMPULLA_OPACITY);
     }
     const CONNECTOR_GLASS = glassMaterial(0xb87fa0, 0.18);
     const COMMON_CRUS_GLASS = glassMaterial(0xb08fe0, 0.28);
@@ -183,7 +206,18 @@ export class CanalScene {
     return { center: sphere.center, radius: sphere.radius };
   }
 
-  /** Fits a static camera distance to the loaded geometry's actual bounding sphere, once. */
+  /**
+   * Fits the camera distance to the loaded geometry's actual bounding sphere for the
+   * CURRENT canvas aspect ratio. Not a one-time computation -- see render()'s resize
+   * check, which re-calls this whenever the canvas's drawing-buffer size changes (mobile
+   * layout settling after initial load, a fullscreen toggle, an orientation change, the
+   * canal-panel view toggle re-showing this canvas, etc.). Without that, the camera
+   * distance stayed fixed at whatever aspect ratio happened to be current the one time
+   * this fired after the mesh finished loading -- reported live: the ear models rendered
+   * too small specifically in mobile/fullscreen layouts, unlike eyeScene.ts's eyeballs
+   * (which stay correctly sized at any canvas size because THAT camera uses a fixed
+   * distance with no bounding-sphere fit at all, so it has no stale-fit state to go wrong).
+   */
   private fitCamera(): void {
     if (!this.boundingSphere) return;
     const margin = 1.15;
@@ -192,7 +226,15 @@ export class CanalScene {
     const radius = this.boundingSphere.radius * margin;
     const distanceForVertical = radius / Math.tan(vFov / 2);
     const distanceForHorizontal = radius / (Math.tan(vFov / 2) * aspect);
-    const distance = Math.max(distanceForVertical, distanceForHorizontal);
+    // Math.min ("cover" style -- fit tightly to whichever axis is MORE constraining, same
+    // idea as CSS object-fit: cover), not Math.max ("contain" -- guarantees the whole
+    // bounding sphere fits within frame, but on a narrow/tall aspect like a phone's
+    // portrait canal panel, that pulls the camera back far enough to satisfy the WIDE
+    // axis too, leaving the model looking small with large empty margins top/bottom --
+    // reported live). Cover-style allows the model to slightly overflow the frame on the
+    // less-constraining axis instead, matching how eyeScene.ts's fixed-distance camera
+    // already reads as consistently large regardless of aspect ratio.
+    const distance = Math.min(distanceForVertical, distanceForHorizontal);
     const zSign = this.side === 'left' ? -1 : 1;
     const target = this.boundingSphere.center;
     this.camera.position.set(target.x, target.y + distance * 0.25, target.z + distance * zSign);
@@ -236,6 +278,12 @@ export class CanalScene {
 
   render(): void {
     resizeRendererToDisplaySize(this.renderer, this.camera);
+    const canvas = this.renderer.domElement;
+    if (this.boundingSphere && (canvas.width !== this.lastFitWidth || canvas.height !== this.lastFitHeight)) {
+      this.lastFitWidth = canvas.width;
+      this.lastFitHeight = canvas.height;
+      this.fitCamera();
+    }
     this.renderer.render(this.scene, this.camera);
   }
 }
