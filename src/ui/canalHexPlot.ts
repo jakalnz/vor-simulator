@@ -45,6 +45,38 @@ const COLOR_LEFT = '#e2534a';
 const COLOR_RIGHT = '#4caf6b';
 
 /**
+ * App's own --accent (see styles.css), hardcoded here since canvas 2D drawing can't read
+ * CSS custom properties directly (same reasoning as this file's isLight-branched grid/
+ * label colors above). Used for the resultant paired-difference vectors below -- a
+ * deliberately distinct color from the red/green per-canal spokes, since these vectors
+ * represent a different kind of quantity (a COMBINED signal, not one canal's own activity).
+ */
+const COLOR_ACCENT_DARK = '#d9a441';
+const COLOR_ACCENT_LIGHT = '#b8791f';
+
+interface PairAxis {
+  label: string;
+  vertexA: HexVertex;
+  vertexB: HexVertex;
+}
+
+/**
+ * The three anatomically real push-pull canal pairs, each one a straight line through the
+ * hexagon's center: horizontal L/R are coplanar with each other, LARP is left-anterior
+ * paired with right-posterior, RALP is right-anterior paired with left-posterior (see
+ * physics/canal.test.ts's coplanarity assertions -- this is not a visualization
+ * convenience, it's the real anatomical pairing this app's VOR engine already sums over).
+ * Built from VERTICES' own indices (each pair is exactly 180 degrees apart in that array)
+ * rather than a second hand-written angle table, so this can never drift out of sync with
+ * the spoke layout above.
+ */
+const PAIR_AXES: PairAxis[] = [
+  { label: 'Horiz', vertexA: VERTICES[0], vertexB: VERTICES[3] }, // LL / RL
+  { label: 'LARP', vertexA: VERTICES[1], vertexB: VERTICES[4] }, // LA / RP
+  { label: 'RALP', vertexA: VERTICES[2], vertexB: VERTICES[5] }, // RA / LP
+];
+
+/**
  * Hexagonal "mean gains"-style plot of the 6 canals' current firing rates -- an
  * alternative to the 3D ear model view, showing all 6 canals' excitation/inhibition at a
  * glance rather than split across two ear panels. The inner hexagon is the resting
@@ -137,6 +169,64 @@ export class CanalHexPlot {
 
     if (this.rates) {
       const maxDrawRadius = outerRadius * MAX_RADIUS_SCALE;
+
+      /**
+       * Draws one paired-canal RESULTANT vector: an arrow from the plot's center along a
+       * pair's own axis, pointing toward whichever of its two canals currently fires
+       * MORE (the side "winning" the push-pull comparison), with length proportional to
+       * the Hz DIFFERENCE between them -- the actual combined signal reaching the
+       * brainstem, not either canal's own activity alone (see PAIR_AXES' doc comment).
+       * Drawn UNDER the per-canal spokes below (called first), so the individual spokes
+       * -- what a student reads first -- stay visually primary; this is a secondary,
+       * distinctly-colored layer explaining how those spokes combine.
+       */
+      const drawPairVector = (angleDeg: number, radius: number, color: string, label: string): void => {
+        if (radius < 2) return; // nothing meaningful to draw at (near-)zero difference
+        const [x, y] = pointFor(angleDeg, radius);
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color;
+        ctx.lineWidth = 3;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+
+        // Small triangular arrowhead at the tip, oriented along the vector's own
+        // direction -- matches pointFor's own (x: +cos, y: -sin) convention.
+        const rad = (angleDeg * Math.PI) / 180;
+        const headLength = 9;
+        const headWidth = 7;
+        const dirX = Math.cos(rad);
+        const dirY = -Math.sin(rad);
+        const perpX = -dirY;
+        const perpY = dirX;
+        const baseX = x - dirX * headLength;
+        const baseY = y - dirY * headLength;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(baseX + perpX * (headWidth / 2), baseY + perpY * (headWidth / 2));
+        ctx.lineTo(baseX - perpX * (headWidth / 2), baseY - perpY * (headWidth / 2));
+        ctx.closePath();
+        ctx.fill();
+
+        const [lx, ly] = pointFor(angleDeg, radius + 12);
+        ctx.font = '10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, lx, ly);
+      };
+
+      const accentColor = isLight ? COLOR_ACCENT_LIGHT : COLOR_ACCENT_DARK;
+      for (const pair of PAIR_AXES) {
+        const hzA = this.rates[pair.vertexA.canal][pair.vertexA.side];
+        const hzB = this.rates[pair.vertexB.canal][pair.vertexB.side];
+        const net = hzA - hzB;
+        const angle = net >= 0 ? pair.vertexA.angleDeg : pair.vertexB.angleDeg;
+        const radius = Math.max(0, Math.min(maxDrawRadius, Math.abs(net) * pxPerHz));
+        drawPairVector(angle, radius, accentColor, pair.label);
+      }
+
       ctx.lineWidth = 3;
       ctx.lineCap = 'round';
       for (const v of VERTICES) {
