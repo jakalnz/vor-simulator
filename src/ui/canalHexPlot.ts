@@ -39,17 +39,42 @@ const VERTICES: HexVertex[] = [
   { canal: 'posterior', side: 'left', label: 'LP', angleDeg: 300 },
 ];
 
-// Reuses the VNG trace's horizontal(red)/vertical(green) palette so a left/right split
-// here doesn't introduce a third unrelated color convention into the app.
-const COLOR_LEFT = '#e2534a';
-const COLOR_RIGHT = '#4caf6b';
+// Same excitation/inhibition palette as canalScene.ts's 3D ear model (COLOR_REST/
+// COLOR_EXCITED/COLOR_INHIBITED there) -- deliberately NOT a left/right color split (an
+// earlier version used red=left/green=right), since which side a spoke belongs to is
+// already unambiguous from its label/position, while excitation state is the thing a
+// student actually needs a color cue for, and having the SAME two views encode the same
+// state in the same colors (rather than one red/green-by-side, the other red/blue-by-
+// state) was confusing across the two canal-panel views.
+const REST_RGB: [number, number, number] = [154, 163, 171]; // 0x9aa3ab
+const EXCITED_RGB: [number, number, number] = [224, 27, 36]; // 0xe01b24
+const INHIBITED_RGB: [number, number, number] = [26, 95, 180]; // 0x1a5fb4
+
+function lerpRgb(a: [number, number, number], b: [number, number, number], t: number): string {
+  const r = Math.round(a[0] + (b[0] - a[0]) * t);
+  const g = Math.round(a[1] + (b[1] - a[1]) * t);
+  const bl = Math.round(a[2] + (b[2] - a[2]) * t);
+  return `rgb(${r},${g},${bl})`;
+}
+
+/**
+ * Colors a single canal's spoke by how far its firing rate has moved from baseline --
+ * grey at rest, lerping to red as it excites, to blue as it's inhibited, saturating at
+ * OUTER_RING_SPAN_HZ (same scale the outer reference ring itself is drawn at, so a spoke
+ * reaching full color exactly coincides with it reaching the outer ring visually).
+ */
+function colorForHz(hz: number): string {
+  const t = Math.max(-1, Math.min(1, (hz - FIRING_BASELINE_HZ) / OUTER_RING_SPAN_HZ));
+  return t >= 0 ? lerpRgb(REST_RGB, EXCITED_RGB, t) : lerpRgb(REST_RGB, INHIBITED_RGB, -t);
+}
 
 /**
  * App's own --accent (see styles.css), hardcoded here since canvas 2D drawing can't read
  * CSS custom properties directly (same reasoning as this file's isLight-branched grid/
  * label colors above). Used for the resultant paired-difference vectors below -- a
- * deliberately distinct color from the red/green per-canal spokes, since these vectors
- * represent a different kind of quantity (a COMBINED signal, not one canal's own activity).
+ * deliberately distinct color from the red/grey/blue excite/inhibit spokes, since these
+ * vectors represent a different kind of quantity (a COMBINED signal, not one canal's own
+ * activity).
  */
 const COLOR_ACCENT_DARK = '#d9a441';
 const COLOR_ACCENT_LIGHT = '#b8791f';
@@ -233,7 +258,7 @@ export class CanalHexPlot {
         const hz = this.rates[v.canal][v.side];
         const radius = Math.max(0, Math.min(maxDrawRadius, hz * pxPerHz));
         const [x, y] = pointFor(v.angleDeg, radius);
-        ctx.strokeStyle = v.side === 'left' ? COLOR_LEFT : COLOR_RIGHT;
+        ctx.strokeStyle = colorForHz(hz);
         ctx.beginPath();
         ctx.moveTo(cx, cy);
         ctx.lineTo(x, y);
