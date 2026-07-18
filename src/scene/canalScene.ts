@@ -122,7 +122,7 @@ export class CanalScene {
   private lastFitWidth = 0;
   private lastFitHeight = 0;
 
-  constructor(canvas: HTMLCanvasElement, private readonly side: EarSide) {
+  constructor(canvas: HTMLCanvasElement, side: EarSide) {
     this.renderer = createRenderer(canvas);
     this.scene.add(...makeAmbientAndKeyLight());
 
@@ -137,7 +137,11 @@ export class CanalScene {
     this.headGroup.add(this.labyrinthGroup);
     this.scene.add(this.headGroup);
 
-    this.camera.position.set(0.02, 0.012, side === 'left' ? -0.024 : 0.024);
+    // View from anterior (Three +X, see HEAD_FRAME_TO_THREE / headScene.ts's identical
+    // "nose toward +X" convention) so the ear model's default view matches the head
+    // model's default front-on view, rather than the old default of looking along Z
+    // (lateral), which put the horizontal canal face-on instead.
+    this.camera.position.set(0.024, 0.012, 0);
     this.camera.lookAt(0, 0, 0);
 
     const clotMaterial = new THREE.MeshStandardMaterial({ color: CLOT_COLOR, emissive: CLOT_COLOR, emissiveIntensity: 0.3, roughness: 0.6 });
@@ -273,9 +277,11 @@ export class CanalScene {
     // less-constraining axis instead, matching how eyeScene.ts's fixed-distance camera
     // already reads as consistently large regardless of aspect ratio.
     const distance = Math.min(distanceForVertical, distanceForHorizontal);
-    const zSign = this.side === 'left' ? -1 : 1;
+    // View from anterior (+X), matching this scene's constructor and headScene.ts's
+    // default front-on view of the head -- not a lateral (+-Z) view, which put the
+    // horizontal canal face-on instead (see setOrientation's caller / user request).
     const target = this.boundingSphere.center;
-    this.camera.position.set(target.x, target.y + distance * 0.25, target.z + distance * zSign);
+    this.camera.position.set(target.x + distance, target.y + distance * 0.25, target.z);
     this.camera.lookAt(target);
   }
 
