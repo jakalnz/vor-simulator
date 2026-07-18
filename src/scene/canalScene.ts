@@ -192,9 +192,11 @@ export class CanalScene {
     }
     const CONNECTOR_GLASS = glassMaterial(0xb87fa0, 0.18);
     // Common crus is anatomically just the shared trunk where the canal ducts join --
-    // tinted the same as the ducts' resting color (COLOR_REST) so it reads as a
-    // continuation of the canal, not a distinct structure.
-    const COMMON_CRUS_GLASS = glassMaterial(COLOR_REST.getHex(), 0.28);
+    // tinted the same as the ducts' resting color (COLOR_REST) and given the same emissive
+    // canalColorMaterial (not the plain, non-emissive glassMaterial) so it reads at the
+    // same brightness as the duct meshes it's continuous with, rather than looking dark by
+    // comparison under ambient-only lighting.
+    const COMMON_CRUS_GLASS = canalColorMaterial(COLOR_REST.getHex(), 0.28);
     // Utricle/saccule tinted to match the otoconia clot (CLOT_COLOR) -- these are the
     // otolith organs where the clot's otoconia debris actually originates.
     const UTRICLE_GLASS = glassMaterial(CLOT_COLOR, 0.16);
