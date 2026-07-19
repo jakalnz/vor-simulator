@@ -151,6 +151,28 @@ body {
   transition: background 0.15s ease, color 0.15s ease;
 }
 
+/* Selected-state modifier shared by any .about-pill used as a toggle/radio (the micro
+ * fluid view's plane submenu below, the fullscreen toggle elsewhere) -- accent border/
+ * text so the current selection reads at a glance against the plain unselected pills. */
+.about-pill.is-active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Auto/Horizontal/LARP/RALP plane picker for the "Micro fluid view" toggle (see
+ * canalScene.ts's setFocusedCanal/updateCameraFocus) -- a thin row directly under the
+ * panel header, only shown while micro view is active (see main.ts's applyMicroUI),
+ * same flow-row placement reasoning as .canal-legend below. */
+.canal-micro-submenu {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  background: var(--panel-header);
+  border-bottom: 1px solid var(--border);
+  padding: 5px 8px;
+}
+
 .about-pill:hover {
   background: var(--panel-header);
   color: var(--text);

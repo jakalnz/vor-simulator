@@ -133,9 +133,94 @@ function applyCanalView(): void {
 }
 canalViewToggleBtn.addEventListener('click', () => {
   canalView = canalView === 'ear' ? 'firing' : 'ear';
+  // The hex plot has no per-canal 3D camera to zoom -- micro view only makes sense over
+  // the 3D ear model, so switching to it turns micro view back off rather than leaving
+  // it in a state with nothing visible to show it.
+  if (canalView === 'firing' && microZoomEnabled) {
+    microZoomEnabled = false;
+    applyMicroUI();
+  }
   applyCanalView();
 });
 applyCanalView();
+
+// "Micro fluid view" -- zooms each ear's own 3D camera in on the actively-stimulated
+// canal's ampulla to demonstrate fluid microdynamics up close (see
+// canalScene.ts's setFocusedCanal/updateCameraFocus for the actual camera glide).
+// Auto/Horizontal/LARP/RALP mirrors the anatomical canal-PLANE pairing from claude.MD
+// section 2.1 (LARP = Left Anterior + Right Posterior, RALP = Right Anterior + Left
+// Posterior, coplanar pairs that share one functional axis) -- not this app's
+// per-(canal,side) CanalType, which the physics engine models independently per ear.
+type MicroPlane = 'horizontal' | 'larp' | 'ralp';
+const PLANE_CANAL_BY_SIDE: Record<MicroPlane, Record<EarSide, CanalType>> = {
+  horizontal: { left: 'horizontal', right: 'horizontal' },
+  larp: { left: 'anterior', right: 'posterior' },
+  ralp: { left: 'posterior', right: 'anterior' },
+};
+/** Combined (both ears') firing-rate deviation from baseline a plane needs before "Auto"
+ * treats it as the actively-stimulated plane, rather than chasing sensor/engine noise
+ * around near-rest -- a visualization tuning choice, not a physiological threshold. */
+const MICRO_AUTO_ACTIVATION_THRESHOLD_HZ = 3;
+
+const canalMicroToggleBtn = document.getElementById('canal-micro-toggle') as HTMLButtonElement;
+const canalMicroSubmenu = document.getElementById('canal-micro-submenu') as HTMLDivElement;
+let microZoomEnabled = false;
+let microPlaneMode: 'auto' | MicroPlane = 'auto';
+/** In 'auto' mode, sticks with the last actively-stimulated plane while the head is
+ * momentarily still (deviation below threshold) rather than snapping back out to the
+ * overview -- matches the reference spec's "stay at last position if head stationary". */
+let lastAutoPlane: MicroPlane | null = null;
+
+function applyMicroUI(): void {
+  canalMicroSubmenu.hidden = !microZoomEnabled;
+  canalMicroToggleBtn.classList.toggle('is-active', microZoomEnabled);
+  canalMicroToggleBtn.textContent = microZoomEnabled ? 'Exit micro view' : 'Micro fluid view';
+  if (!microZoomEnabled) {
+    lastAutoPlane = null;
+    canalSceneLeft.setFocusedCanal(null);
+    canalSceneRight.setFocusedCanal(null);
+  }
+}
+canalMicroToggleBtn.addEventListener('click', () => {
+  microZoomEnabled = !microZoomEnabled;
+  if (microZoomEnabled && canalView !== 'ear') {
+    canalView = 'ear';
+    applyCanalView();
+  }
+  applyMicroUI();
+});
+applyMicroUI();
+
+for (const btn of canalMicroSubmenu.querySelectorAll<HTMLButtonElement>('button[data-plane]')) {
+  btn.addEventListener('click', () => {
+    microPlaneMode = btn.dataset.plane as 'auto' | MicroPlane;
+    for (const other of canalMicroSubmenu.querySelectorAll('button')) other.classList.remove('is-active');
+    btn.classList.add('is-active');
+  });
+}
+
+/** Combined (left+right) firing-rate deviation from baseline for one canal PLANE --
+ * horizontal is that canal on both ears, LARP/RALP each combine two DIFFERENT canal
+ * types across the two ears (see PLANE_CANAL_BY_SIDE's doc comment). */
+function planeActivation(rates: typeof lastFiringRates, plane: MicroPlane): number {
+  const canals = PLANE_CANAL_BY_SIDE[plane];
+  return Math.abs(rates[canals.left].left - 90) + Math.abs(rates[canals.right].right - 90);
+}
+
+/** Picks whichever plane has the largest combined deviation from baseline, or null if
+ * none clears MICRO_AUTO_ACTIVATION_THRESHOLD_HZ (head roughly stationary). */
+function computeAutoActivePlane(rates: typeof lastFiringRates): MicroPlane | null {
+  let best: MicroPlane | null = null;
+  let bestScore = MICRO_AUTO_ACTIVATION_THRESHOLD_HZ;
+  for (const plane of ['horizontal', 'larp', 'ralp'] as MicroPlane[]) {
+    const score = planeActivation(rates, plane);
+    if (score > bestScore) {
+      bestScore = score;
+      best = plane;
+    }
+  }
+  return best;
+}
 
 // About popover -- cites the academic source for the real-anatomy meshes (IE-Map).
 const canalAboutPill = document.getElementById('canal-about-pill') as HTMLButtonElement;
@@ -459,6 +544,15 @@ function renderFrame(): void {
       ? { canal: bppvSelection.canal, arcFraction: lastDebrisArcFraction }
       : null
   );
+
+  if (microZoomEnabled) {
+    const plane = microPlaneMode === 'auto' ? computeAutoActivePlane(lastFiringRates) ?? lastAutoPlane : microPlaneMode;
+    if (plane) lastAutoPlane = plane;
+    const canals = plane ? PLANE_CANAL_BY_SIDE[plane] : null;
+    canalSceneLeft.setFocusedCanal(canals?.left ?? null);
+    canalSceneRight.setFocusedCanal(canals?.right ?? null);
+  }
+
   headScene.setOrientation(lastQHead);
 
   if (mode === 'maneuver') {
@@ -502,4 +596,5 @@ if (import.meta.env.DEV) {
     for (let i = 0; i < steps; i++) stepPhysicsOnce(FIXED_DT);
     renderFrame();
   };
+  (window as unknown as { __vorDebugScenes: unknown }).__vorDebugScenes = { canalSceneLeft, canalSceneRight };
 }

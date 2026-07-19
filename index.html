@@ -43,8 +43,15 @@
           <h2>
             <span id="canal-panel-title">Semicircular canals</span>
             <button id="canal-view-toggle" class="about-pill" type="button" title="Switch between the 3D ear model and a neural firing-rate plot">Neural firing</button>
+            <button id="canal-micro-toggle" class="about-pill" type="button" title="Zoom the camera in on the actively-stimulated ampulla to demonstrate fluid microdynamics">Micro fluid view</button>
             <button id="canal-about-pill" class="about-pill" type="button">About</button>
           </h2>
+          <div class="canal-micro-submenu" id="canal-micro-submenu" hidden>
+            <button type="button" class="about-pill is-active" data-plane="auto">Auto</button>
+            <button type="button" class="about-pill" data-plane="horizontal">Horizontal</button>
+            <button type="button" class="about-pill" data-plane="larp">LARP</button>
+            <button type="button" class="about-pill" data-plane="ralp">RALP</button>
+          </div>
           <div class="canal-canvas-wrap canvas-wrap canvas-wrap--split" id="canal-ear-view">
             <div class="split-pane">
               <span class="split-pane-label">Right ear</span>

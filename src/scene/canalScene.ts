@@ -29,6 +29,10 @@ interface EarAnatomyCanal {
   connectorMesh: string;
   ampullaBulgeMesh: string;
   canalUtricleWallMesh?: string;
+  /** Raw right-ear HeadFrame-axis anchor point (meters), used by the micro-zoom camera
+   * (see focusOnCanal/updateCameraFocus) to target this canal's ampulla -- distinct from
+   * ductMesh's own geometry origin, which OBJLoader leaves in the mesh's local space. */
+  ampullaAnchor: [number, number, number];
 }
 interface EarAnatomyData {
   side: 'left' | 'right';
@@ -122,9 +126,42 @@ export class CanalScene {
   private lastFitWidth = 0;
   private lastFitHeight = 0;
 
+  // Micro-zoom camera state (see setFocusedCanal/updateCameraFocus) -- lets the "Micro
+  // fluid view" toggle glide the camera in on one canal's ampulla to demonstrate fluid
+  // microdynamics up close, then glide back out to the whole-labyrinth overview.
+  /** Per-canal ampulla anchor in labyrinthGroup-LOCAL space (raw right-ear HeadFrame
+   * axes -- labyrinthGroup's own quaternion+mirror scale, already applied to the loaded
+   * meshes, applies to this too via localToWorld). Populated synchronously in the
+   * constructor from earAnatomy.json (a static import), unlike the meshes themselves
+   * which load asynchronously -- the anchor position doesn't need the mesh geometry. */
+  private readonly ampullaLocalPositions: Partial<Record<CanalType, THREE.Vector3>> = {};
+  /** Which canal's ampulla the camera should be gliding toward; null = whole-labyrinth
+   * overview (see fitCamera's overviewTarget/overviewDistance). */
+  private focusedCanal: CanalType | null = null;
+  private readonly overviewTarget = new THREE.Vector3();
+  private overviewDistance = 0;
+  /** Camera's current (smoothed) look-at point and distance -- lerped toward the
+   * overview or focused-ampulla target each frame in updateCameraFocus, rather than
+   * snapping instantly, so the "Micro fluid view" toggle reads as a camera glide. */
+  private readonly currentLookTarget = new THREE.Vector3();
+  private currentDistance = 0;
+  /** Fixed viewing direction (anterior + slight elevation), UNNORMALIZED to match
+   * fitCamera's own target+viewDir*distance convention exactly (see its doc comment) --
+   * both the overview and the micro-zoomed close-up view from the same angle, just at
+   * different distances/targets, so the camera never re-orients, only glides. */
+  private readonly viewDir = new THREE.Vector3(1, 0.25, 0);
+
   constructor(canvas: HTMLCanvasElement, side: EarSide) {
     this.renderer = createRenderer(canvas);
     this.scene.add(...makeAmbientAndKeyLight());
+
+    // Ampulla anchors are plain JSON data (no mesh geometry needed), so these can be
+    // populated synchronously here rather than waiting on loadRealAnatomy's async
+    // OBJLoader calls below.
+    for (const canal of Object.keys(EAR_ANATOMY.canals) as CanalType[]) {
+      const [x, y, z] = EAR_ANATOMY.canals[canal].ampullaAnchor;
+      this.ampullaLocalPositions[canal] = new THREE.Vector3(x, y, z);
+    }
 
     // Real-anatomy assembly is authored in raw HeadFrame axes (see build.mjs) -- rotate
     // into Three's display space with the same shared conversion every other scene uses,
@@ -280,14 +317,62 @@ export class CanalScene {
     // View from anterior (+X), matching this scene's constructor and headScene.ts's
     // default front-on view of the head -- not a lateral (+-Z) view, which put the
     // horizontal canal face-on instead (see setOrientation's caller / user request).
-    const target = this.boundingSphere.center;
-    this.camera.position.set(target.x + distance, target.y + distance * 0.25, target.z);
-    this.camera.lookAt(target);
+    this.overviewTarget.copy(this.boundingSphere.center);
+    this.overviewDistance = distance;
+    // Only snap the camera directly when NOT mid-micro-zoom -- if a canal is currently
+    // focused, updateCameraFocus's own per-frame lerp owns the camera this tick instead
+    // (a resize firing fitCamera while zoomed in shouldn't yank the camera back out to
+    // the overview).
+    if (!this.focusedCanal) {
+      this.currentLookTarget.copy(this.overviewTarget);
+      this.currentDistance = this.overviewDistance;
+      this.camera.position.copy(this.overviewTarget).addScaledVector(this.viewDir, distance);
+      this.camera.lookAt(this.overviewTarget);
+    }
   }
 
   /** Rotates the whole labyrinth to match the current head orientation. */
   setOrientation(qHead: Quat): void {
     this.headGroup.quaternion.copy(toThreeQuaternion(qHead));
+  }
+
+  /**
+   * Sets which canal's ampulla the "Micro fluid view" camera should glide in on, or null
+   * to glide back out to the whole-labyrinth overview -- see updateCameraFocus (called
+   * every render()) for the actual per-frame glide. Purely a camera behavior; doesn't
+   * change what's colored/rendered (setFiringRates/setDebris already do that).
+   */
+  setFocusedCanal(canal: CanalType | null): void {
+    this.focusedCanal = canal;
+  }
+
+  /**
+   * Glides the camera's look-at point and distance toward either the focused canal's
+   * ampulla (in current, head-orientation-rotated world space -- recomputed every frame
+   * via labyrinthGroup.localToWorld, since the labyrinth itself rotates under a
+   * world-fixed camera) or the whole-labyrinth overview, at a fixed viewing angle
+   * (viewDir) throughout -- only the distance and target change, so the camera glides
+   * rather than re-orienting. Exponential smoothing (not a fixed-duration tween/easing
+   * library) since this runs once per rendered frame with no explicit dt of its own.
+   */
+  private updateCameraFocus(): void {
+    if (!this.boundingSphere) return;
+    const MICRO_ZOOM_DISTANCE_FACTOR = 0.045;
+    const LERP = 0.12;
+
+    let targetLookAt = this.overviewTarget;
+    let targetDistance = this.overviewDistance;
+    const focusedLocal = this.focusedCanal ? this.ampullaLocalPositions[this.focusedCanal] : undefined;
+    if (focusedLocal) {
+      this.labyrinthGroup.updateWorldMatrix(true, false);
+      targetLookAt = this.labyrinthGroup.localToWorld(focusedLocal.clone());
+      targetDistance = this.overviewDistance * MICRO_ZOOM_DISTANCE_FACTOR;
+    }
+
+    this.currentLookTarget.lerp(targetLookAt, LERP);
+    this.currentDistance += (targetDistance - this.currentDistance) * LERP;
+    this.camera.position.copy(this.currentLookTarget).addScaledVector(this.viewDir, this.currentDistance);
+    this.camera.lookAt(this.currentLookTarget);
   }
 
   /**
@@ -346,6 +431,7 @@ export class CanalScene {
       this.lastFitHeight = canvas.height;
       this.fitCamera();
     }
+    this.updateCameraFocus();
     this.renderer.render(this.scene, this.camera);
   }
 }
