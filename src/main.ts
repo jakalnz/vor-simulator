@@ -215,6 +215,55 @@ canalFlowShadingToggleBtn.addEventListener('click', () => {
   canalFlowShadingToggleBtn.textContent = `Flow shading: ${flowShadingEnabled ? 'On' : 'Off'}`;
 });
 
+// "Ear view" mode -- 'head' (default, matches the head model's own front-on view) or
+// 'lateral' (this app's ORIGINAL default before that change, showing the horizontal
+// canal face-on -- brought back as a selectable option, not a replacement). Independent
+// of Micro fluid view, which always keeps its own fixed zoom angle regardless of this.
+const canalOrientToggleBtn = document.getElementById('canal-orient-toggle') as HTMLButtonElement;
+const canalOrientSubmenu = document.getElementById('canal-orient-submenu') as HTMLDivElement;
+const canalGimbalLeft = document.getElementById('canal-gimbal-left') as HTMLDivElement;
+const canalGimbalRight = document.getElementById('canal-gimbal-right') as HTMLDivElement;
+let orientSubmenuOpen = false;
+let earViewMode: 'head' | 'lateral' = 'head';
+
+/** Updates the reintroduced orientation-reference gimbal's left/right labels for the
+ * current Ear view mode -- see index.html's data-head/data-lateral attributes and
+ * styles.css's .canal-gimbal doc comment for why this is a static reference label, not
+ * a live-rotating 3D indicator. */
+function applyGimbalLabels(): void {
+  for (const gimbal of [canalGimbalLeft, canalGimbalRight]) {
+    for (const label of gimbal.querySelectorAll<HTMLElement>('.canal-gimbal-label[data-head]')) {
+      label.textContent = earViewMode === 'head' ? label.dataset.head! : label.dataset.lateral!;
+    }
+  }
+}
+applyGimbalLabels();
+
+canalOrientToggleBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  orientSubmenuOpen = !orientSubmenuOpen;
+  canalOrientSubmenu.hidden = !orientSubmenuOpen;
+});
+document.addEventListener('click', (e) => {
+  if (orientSubmenuOpen && e.target !== canalOrientToggleBtn && !canalOrientSubmenu.contains(e.target as Node)) {
+    orientSubmenuOpen = false;
+    canalOrientSubmenu.hidden = true;
+  }
+});
+for (const btn of canalOrientSubmenu.querySelectorAll<HTMLButtonElement>('button[data-orient]')) {
+  btn.addEventListener('click', () => {
+    earViewMode = btn.dataset.orient as 'head' | 'lateral';
+    canalSceneLeft.setOverviewMode(earViewMode);
+    canalSceneRight.setOverviewMode(earViewMode);
+    canalOrientToggleBtn.textContent = `Ear view: ${earViewMode === 'head' ? 'Head orientation' : 'Lateral view'}`;
+    for (const other of canalOrientSubmenu.querySelectorAll('button')) other.classList.remove('is-active');
+    btn.classList.add('is-active');
+    applyGimbalLabels();
+    orientSubmenuOpen = false;
+    canalOrientSubmenu.hidden = true;
+  });
+}
+
 /** Combined (left+right) firing-rate deviation from baseline for one canal PLANE --
  * horizontal is that canal on both ears, LARP/RALP each combine two DIFFERENT canal
  * types across the two ears (see PLANE_CANAL_BY_SIDE's doc comment). */

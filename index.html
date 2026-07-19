@@ -45,6 +45,7 @@
             <button id="canal-view-toggle" class="about-pill" type="button" title="Switch between the 3D ear model and a neural firing-rate plot">Neural firing</button>
             <button id="canal-micro-toggle" class="about-pill" type="button" title="Zoom the camera in on the actively-stimulated ampulla to demonstrate fluid microdynamics">Micro fluid view</button>
             <button id="canal-flow-shading-toggle" class="about-pill" type="button" title="Toggle the moving endolymph flow-band overlay on the duct/ampulla">Flow shading: Off</button>
+            <button id="canal-orient-toggle" class="about-pill" type="button" title="Switch the ear model's default camera angle">Ear view: Head orientation</button>
             <button id="canal-about-pill" class="about-pill" type="button">About</button>
           </h2>
           <div class="canal-micro-submenu" id="canal-micro-submenu" hidden>
@@ -53,16 +54,32 @@
             <button type="button" class="about-pill" data-plane="larp">LARP</button>
             <button type="button" class="about-pill" data-plane="ralp">RALP</button>
           </div>
+          <div class="canal-micro-submenu" id="canal-orient-submenu" hidden>
+            <button type="button" class="about-pill is-active" data-orient="head">Head orientation</button>
+            <button type="button" class="about-pill" data-orient="lateral">Lateral view</button>
+          </div>
           <div class="canal-canvas-wrap canvas-wrap canvas-wrap--split" id="canal-ear-view">
             <div class="split-pane">
               <span class="split-pane-label">Right ear</span>
               <canvas id="canal-canvas-right"></canvas>
               <div id="canal-cleared-toast-right" class="cleared-toast" hidden>👍 Cleared into the utricle</div>
+              <div class="canal-gimbal" id="canal-gimbal-right">
+                <span class="canal-gimbal-label canal-gimbal-top">S</span>
+                <span class="canal-gimbal-label canal-gimbal-bottom">I</span>
+                <span class="canal-gimbal-label canal-gimbal-left" data-head="Med" data-lateral="P">P</span>
+                <span class="canal-gimbal-label canal-gimbal-right" data-head="Lat" data-lateral="A">A</span>
+              </div>
             </div>
             <div class="split-pane">
               <span class="split-pane-label">Left ear</span>
               <canvas id="canal-canvas-left"></canvas>
               <div id="canal-cleared-toast-left" class="cleared-toast" hidden>👍 Cleared into the utricle</div>
+              <div class="canal-gimbal" id="canal-gimbal-left">
+                <span class="canal-gimbal-label canal-gimbal-top">S</span>
+                <span class="canal-gimbal-label canal-gimbal-bottom">I</span>
+                <span class="canal-gimbal-label canal-gimbal-left" data-head="Lat" data-lateral="A">A</span>
+                <span class="canal-gimbal-label canal-gimbal-right" data-head="Med" data-lateral="P">P</span>
+              </div>
             </div>
           </div>
           <div class="canvas-wrap" id="canal-hex-view" hidden>

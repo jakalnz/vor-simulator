@@ -155,6 +155,14 @@ function makeIndicatorCone(color: number): THREE.Mesh {
   mesh.renderOrder = 999;
   mesh.frustumCulled = false;
   mesh.visible = false;
+  // Zero scale, not just visible:false -- computeBoundingSphereInfo's Box3.setFromObject
+  // walks the whole labyrinthGroup regardless of each object's .visible flag, so this
+  // mesh's full UNIT-scale geometry (radius 0.4, height 1 -- i.e. ~1m, vastly bigger
+  // than the ~2cm labyrinth) blew up the computed bounding sphere and wrecked the
+  // camera framing for the ENTIRE scene the moment this was added, confirmed live
+  // (radius came back ~0.75 instead of the expected ~0.02). The old THREE.ArrowHelper
+  // this replaced started at length=0 for the same reason.
+  mesh.scale.set(0, 0, 0);
   return mesh;
 }
 
@@ -273,6 +281,17 @@ export class CanalScene {
    * priority over that cosmetic mirror-symmetry concern, so both ear panels use this
    * same fixed angle. */
   private readonly viewDir = new THREE.Vector3(1, 0.25, 0);
+  /** "Lateral view" mode's camera direction -- the ORIGINAL default this scene used
+   * before it was switched to the anterior-facing viewDir above (see that constant's
+   * git history), brought back as a selectable alternative rather than replaced
+   * outright: some users want the horizontal canal face-on (this), others the
+   * front-on view matching the head model (viewDir) -- see setViewMode/main.ts's "Ear
+   * view" toggle. Side-dependent (unlike viewDir) since it's a lateral offset, which
+   * needs to point outward from the head on each side, not a shared anterior direction. */
+  private readonly lateralViewDir: THREE.Vector3;
+  /** Which of the two camera directions above the OVERVIEW (not Micro fluid view's own
+   * separate zoom logic) currently uses -- see setViewMode. */
+  private overviewViewMode: 'head' | 'lateral' = 'head';
 
   // Fluid/head-motion overlay arrows (see setFluidVisuals) -- need this scene's own
   // `side` for the physics sign conventions (CANAL_PLANE_NORMAL/AMPULLOFUGAL_SIGN are
@@ -301,6 +320,7 @@ export class CanalScene {
   constructor(canvas: HTMLCanvasElement, private readonly side: EarSide) {
     this.renderer = createRenderer(canvas);
     this.scene.add(...makeAmbientAndKeyLight());
+    this.lateralViewDir = new THREE.Vector3(0, 0.25, side === 'left' ? -1 : 1);
 
     // Ampulla anchors are plain JSON data (no mesh geometry needed), so these can be
     // populated synchronously here rather than waiting on loadRealAnatomy's async
@@ -589,9 +609,21 @@ export class CanalScene {
     if (!this.focusedCanal) {
       this.currentLookTarget.copy(this.overviewTarget);
       this.currentDistance = this.overviewDistance;
-      this.camera.position.copy(this.overviewTarget).addScaledVector(this.viewDir, distance);
+      const dir = this.overviewViewMode === 'lateral' ? this.lateralViewDir : this.viewDir;
+      this.camera.position.copy(this.overviewTarget).addScaledVector(dir, distance);
       this.camera.lookAt(this.overviewTarget);
     }
+  }
+
+  /** Switches the whole-labyrinth OVERVIEW's camera angle -- 'head' (default, matches
+   * the head model's own front-on view) or 'lateral' (this scene's original default,
+   * before that change, showing the horizontal canal face-on -- brought back as a
+   * selectable option per user request, not a replacement). Doesn't affect Micro fluid
+   * view's own separate zoom/angle logic. Applied on the NEXT fitCamera/
+   * updateCameraFocus call, not instantly, so it glides like any other camera change
+   * here rather than snapping. */
+  setOverviewMode(mode: 'head' | 'lateral'): void {
+    this.overviewViewMode = mode;
   }
 
   /**
@@ -655,7 +687,11 @@ export class CanalScene {
 
     this.currentLookTarget.lerp(targetLookAt, LERP);
     this.currentDistance += (targetDistance - this.currentDistance) * LERP;
-    this.camera.position.copy(this.currentLookTarget).addScaledVector(this.viewDir, this.currentDistance);
+    // Micro fluid view always uses the fixed anterior viewDir (arrow-direction
+    // correctness depends on a consistent angle there -- see viewDir's own doc
+    // comment); only the whole-labyrinth OVERVIEW respects the "Ear view" mode toggle.
+    const dir = this.focusedCanal ? this.viewDir : this.overviewViewMode === 'lateral' ? this.lateralViewDir : this.viewDir;
+    this.camera.position.copy(this.currentLookTarget).addScaledVector(dir, this.currentDistance);
     this.camera.lookAt(this.currentLookTarget);
   }
 
@@ -797,7 +833,10 @@ export class CanalScene {
     const clamped = THREE.MathUtils.clamp(signedValue, -ARROW_INPUT_CLAMP, ARROW_INPUT_CLAMP);
     const length = (Math.abs(clamped) / ARROW_INPUT_CLAMP) * this.currentDistance * ARROW_LENGTH_FRACTION;
     arrow.visible = length > 1e-9;
-    if (!arrow.visible) return;
+    if (!arrow.visible) {
+      arrow.scale.set(0, 0, 0);
+      return;
+    }
     arrow.position.copy(position);
     const direction = tangentVec.clone().multiplyScalar(Math.sign(clamped) || 1).normalize();
     arrow.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);

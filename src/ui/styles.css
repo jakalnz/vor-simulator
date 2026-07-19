@@ -411,6 +411,53 @@ body {
   pointer-events: none;
 }
 
+/* Orientation reference gimbal (see main.ts's "Ear view" toggle) -- reintroduces the
+ * old pre-VOR app's static S/I/A-P/Med-Lat corner labels, dropped in the rewrite to
+ * real-anatomy-only meshes. NOT a live-rotating 3D indicator -- just a fixed reference
+ * for which screen direction is which anatomical axis in the CURRENT camera angle
+ * (Head orientation vs Lateral view -- see canal-orient-submenu), same idea as a map's
+ * compass rose. Sits over the split-pane's own canvas (not the .split-pane-label,
+ * which already owns the top-left corner), spanning the full pane so its 4 labels can
+ * anchor to each edge. */
+.canal-gimbal {
+  position: absolute;
+  inset: 4px;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.canal-gimbal-label {
+  position: absolute;
+  font-family: 'SFMono-Regular', Consolas, ui-monospace, monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.03em;
+  color: var(--text-faint);
+}
+
+.canal-gimbal-top {
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.canal-gimbal-bottom {
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.canal-gimbal-left {
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.canal-gimbal-right {
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
 /* "Cleared into the utricle" notification toast (see main.ts's makeToast / the rising-
  * edge check on canalithState.s >= sMax) -- fades in/out rather than just appearing/
  * disappearing so it reads as a transient toast, not a persistent label. Anchored to its
