@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
-import { CanalType, EarSide } from '../physics/canal';
+import { CanalType, EarSide, CANAL_PLANE_NORMAL, AMPULLOFUGAL_SIGN } from '../physics/canal';
 import { Quat } from '../physics/types';
 import { FIRING_BASELINE_HZ } from '../physics/params';
 import {
@@ -11,7 +11,7 @@ import {
   HEAD_FRAME_TO_THREE,
 } from './sceneUtils';
 import { resolveAssetUrl } from './assetPaths';
-import { ductPositionAtFraction } from '../physics/canalith';
+import { ductPositionAtFraction, ductTangent } from '../physics/canalith';
 import earAnatomyData from './earAnatomy.json';
 
 /**
@@ -54,8 +54,58 @@ const EAR_ANATOMY = earAnatomyData as unknown as EarAnatomyData;
 // read from the ring's real anatomical shape/position (see the legend's ring outlines).
 const CANAL_TINT: Record<CanalType, number> = { posterior: 0xdfeaf2, anterior: 0xdfeaf2, horizontal: 0xdfeaf2 };
 
-const DUCT_OPACITY = 0.55;
+// Lowered from 0.55 -- reported live as too opaque to see the cupula/flow-band overlay
+// (below) through the duct wall once those were added.
+const DUCT_OPACITY = 0.4;
 const AMPULLA_OPACITY = 0.75;
+
+/**
+ * Cupula membrane -- previously not rendered at all (this scene's real-anatomy dataset
+ * has no cupula mesh asset, only a base/apex landmark pair, and the old procedural
+ * cupula dome was dropped in the rewrite to real-anatomy-only meshes -- see this class's
+ * own doc comment). Reported live as "very hard to see" once a student went looking for
+ * it, so it's back as a small procedural disc, in a color deliberately DISTINCT from
+ * both the excite/inhibit duct coloring (red/blue) and the gold otoconia clot, so it
+ * reads as its own anatomical structure rather than competing with either signal.
+ */
+const CUPULA_COLOR = 0x40e8ff;
+/** Radius (meters) of the procedural cupula disc -- sized against the real ampulla
+ * bulge's own scale (see earAnatomy.json/build.mjs), tuned visually rather than derived
+ * from a literature measurement (this is a schematic membrane, not a literal cast). */
+const CUPULA_RADIUS = 0.00075;
+/**
+ * Scales cupula state (vorEngine.ts's dimensionless `beta`, roughly O(0.1-1) for a brisk
+ * head rotation -- see cupula.ts's Steinhausen filter) into the vertex shader's
+ * uDeflection uniform, which shears the disc's "top" edge sideways by
+ * uDeflection*localY (see buildCupulaMeshes) -- uDeflection is itself a DIMENSIONLESS
+ * shear factor (localY is already in meters, at CUPULA_RADIUS's scale), not a distance,
+ * so this gain needs to be O(1), not O(CUPULA_RADIUS) -- an earlier version of this
+ * constant was ~1000x too small (confirmed live: a deflection clamped to its max still
+ * produced a sub-micron, entirely invisible shear) from conflating the two. Tuned so a
+ * brisk head turn visibly tilts the membrane without the shear wildly overshooting the
+ * disc's own radius.
+ */
+const CUPULA_SKEW_SCALE = 0.65;
+const CUPULA_SKEW_CLAMP = 1.5;
+
+/** Endolymph-lag (yellow) and head/wall-motion (green) overlay arrows shown next to the
+ * currently-focused canal's ampulla in Micro fluid view -- see setFluidVisuals. The
+ * reference teaching spec (claude_micro_view.MD) called for a bright WHITE fluid arrow,
+ * but this scene's own ducts/ampullae are themselves pale grey/white (see CANAL_TINT) --
+ * confirmed live that a white arrow all but disappeared against them. Yellow keeps the
+ * "distinct, high-visibility" intent without the contrast failure. */
+const FLUID_ARROW_COLOR = 0xffe135;
+const HEAD_ARROW_COLOR = 0x33ff66;
+/** Visualization gains turning cupula beta / raw angular velocity (rad/s) into arrow
+ * length (meters) -- tuned so a brisk head turn draws a clearly visible, but not
+ * frame-filling, arrow at the micro-zoom's close-up scale. */
+const FLUID_ARROW_LENGTH_SCALE = 0.003;
+const HEAD_ARROW_LENGTH_SCALE = 0.0025;
+const MAX_ARROW_LENGTH = 0.0035;
+/** Cupula-beta-to-scroll-phase gain for the duct/ampulla flow-band shader (see
+ * makeCupulaMaterial's sibling flow-uniform wiring in loadRealAnatomy) -- a
+ * visualization-only scroll speed, not a physical fluid velocity. */
+const FLOW_SCROLL_SPEED = 40;
 
 const COLOR_REST = new THREE.Color(0x9aa3ab);
 const COLOR_INHIBITED = new THREE.Color(0x1a5fb4);
@@ -151,7 +201,17 @@ export class CanalScene {
    * different distances/targets, so the camera never re-orients, only glides. */
   private readonly viewDir = new THREE.Vector3(1, 0.25, 0);
 
-  constructor(canvas: HTMLCanvasElement, side: EarSide) {
+  // Cupula membrane + fluid/head-motion overlay arrows (see setFluidVisuals) -- all need
+  // this scene's own `side` for the physics sign conventions (CANAL_PLANE_NORMAL/
+  // AMPULLOFUGAL_SIGN are side-dependent even though the mesh geometry itself is shared
+  // right-ear data, mirrored by labyrinthGroup.scale.y).
+  private readonly cupulaMeshes: Partial<Record<CanalType, THREE.Mesh>> = {};
+  private readonly cupulaDeflectionUniforms: Partial<Record<CanalType, { value: number }>> = {};
+  private readonly flowPhaseUniforms: Partial<Record<CanalType, { value: number }>> = {};
+  private readonly fluidArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(), 0, FLUID_ARROW_COLOR);
+  private readonly headArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(), 0, HEAD_ARROW_COLOR);
+
+  constructor(canvas: HTMLCanvasElement, private readonly side: EarSide) {
     this.renderer = createRenderer(canvas);
     this.scene.add(...makeAmbientAndKeyLight());
 
@@ -191,7 +251,66 @@ export class CanalScene {
     this.clotGroup.visible = false;
     this.labyrinthGroup.add(this.clotGroup);
 
+    this.buildCupulaMeshes();
+
+    // Children of labyrinthGroup (not headGroup/scene directly), same as the clot group
+    // above -- their positions/directions are set in labyrinthGroup-LOCAL (raw right-ear)
+    // space below, and the parent's own static frame-conversion + left-ear mirror scale
+    // carries them into the right place automatically, exactly like ductPositionAtFraction's
+    // clot marker. Hidden until setFluidVisuals turns them on for a focused canal.
+    this.fluidArrow.visible = false;
+    this.headArrow.visible = false;
+    this.labyrinthGroup.add(this.fluidArrow, this.headArrow);
+
     this.loadRealAnatomy();
+  }
+
+  /**
+   * Builds one procedural cupula disc per canal, oriented to seal the ampulla across the
+   * canal's own sensing plane (its face normal is CANAL_PLANE_NORMAL, the same physical
+   * plane the physics engine projects head rotation onto) and positioned at the ampulla
+   * anchor. Synchronous (no mesh asset to load, see CUPULA_COLOR's doc comment) -- these
+   * exist immediately, unlike the real OBJ anatomy meshes loadRealAnatomy fetches async.
+   */
+  private buildCupulaMeshes(): void {
+    const geometry = new THREE.CircleGeometry(CUPULA_RADIUS, 20);
+    for (const canal of Object.keys(EAR_ANATOMY.canals) as CanalType[]) {
+      const deflectionUniform = { value: 0 };
+      this.cupulaDeflectionUniforms[canal] = deflectionUniform;
+
+      const material = new THREE.MeshStandardMaterial({
+        color: CUPULA_COLOR,
+        emissive: CUPULA_COLOR,
+        emissiveIntensity: 0.55,
+        transparent: true,
+        opacity: 0.6,
+        roughness: 0.4,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      // Shears the disc's "top" (local +Y, away from the base edge at the ampulla) side-
+      // ways by uDeflection*localY -- a simple, cheap stand-in for the cupula membrane
+      // physically bending under cupula deflection, not a literal soft-body simulation.
+      material.onBeforeCompile = (shader) => {
+        shader.uniforms.uDeflection = deflectionUniform;
+        shader.vertexShader = shader.vertexShader
+          .replace('#include <common>', '#include <common>\nuniform float uDeflection;')
+          .replace('#include <begin_vertex>', '#include <begin_vertex>\n transformed.x += uDeflection * position.y;');
+      };
+
+      const mesh = new THREE.Mesh(geometry, material);
+      const anchor = this.ampullaLocalPositions[canal];
+      if (anchor) mesh.position.copy(anchor);
+      // CircleGeometry's own face normal is local +Z -- rotate it to face along this
+      // canal's real sensing-plane normal (raw right-ear frame, same as ampullaAnchor;
+      // the left ear's mirror comes for free from labyrinthGroup's own scale, same
+      // reasoning as ductPositionAtFraction/ampullaLocalPositions above).
+      const n = CANAL_PLANE_NORMAL[canal]['right'];
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(n[0], n[1], n[2]).normalize());
+
+      this.cupulaMeshes[canal] = mesh;
+      this.labyrinthGroup.add(mesh);
+    }
   }
 
   private async loadRealAnatomy(): Promise<void> {
@@ -214,8 +333,8 @@ export class CanalScene {
     // to see even after driving .emissive). The other, purely decorative context meshes
     // (utricle/connector/common crus/saccule below) don't carry a live signal, so they
     // keep the glassier look.
-    const canalColorMaterial = (color: number, opacity: number) =>
-      new THREE.MeshPhysicalMaterial({
+    const canalColorMaterial = (color: number, opacity: number, flowCanal?: CanalType) => {
+      const material = new THREE.MeshPhysicalMaterial({
         color,
         emissive: color,
         transparent: true,
@@ -226,10 +345,40 @@ export class CanalScene {
         depthWrite: false,
         side: THREE.DoubleSide,
       });
+      if (flowCanal) {
+        // Endolymph-flow illustration: a moving band pattern travelling along this
+        // canal's own duct-tangent-at-the-ampulla axis (a fixed direction, not a true
+        // per-vertex tangent field along the whole curved duct -- a simplification, see
+        // this constant's own doc comment) -- phase driven by cupula beta (ampullofugal-
+        // signed, same convention as vorEngine.ts), not raw instantaneous head velocity,
+        // so it decays/persists the same way the cupula membrane's own skew does.
+        const flowUniform = this.flowPhaseUniforms[flowCanal] ?? { value: 0 };
+        this.flowPhaseUniforms[flowCanal] = flowUniform;
+        const t = ductTangent(flowCanal, 'right', 0);
+        const axis = new THREE.Vector3(t[0], t[1], t[2]);
+        material.onBeforeCompile = (shader) => {
+          shader.uniforms.uFlowPhase = flowUniform;
+          shader.uniforms.uFlowAxis = { value: axis };
+          shader.vertexShader = shader.vertexShader
+            .replace('#include <common>', '#include <common>\nuniform vec3 uFlowAxis;\nvarying float vFlowCoord;')
+            .replace('#include <begin_vertex>', '#include <begin_vertex>\n vFlowCoord = dot(position, uFlowAxis);');
+          shader.fragmentShader = shader.fragmentShader
+            .replace('#include <common>', '#include <common>\nuniform float uFlowPhase;\nvarying float vFlowCoord;')
+            .replace(
+              '#include <dithering_fragment>',
+              `
+  float flowBand = smoothstep(0.55, 1.0, sin(vFlowCoord * 900.0 - uFlowPhase));
+  gl_FragColor.rgb += flowBand * 0.45;
+  #include <dithering_fragment>`
+            );
+        };
+      }
+      return material;
+    };
 
     for (const canal of Object.keys(EAR_ANATOMY.canals) as CanalType[]) {
-      this.ductMaterials[canal] = canalColorMaterial(CANAL_TINT[canal] ?? 0xdfeaf2, DUCT_OPACITY);
-      this.ampullaMaterials[canal] = canalColorMaterial(CANAL_TINT[canal] ?? 0xdfeaf2, AMPULLA_OPACITY);
+      this.ductMaterials[canal] = canalColorMaterial(CANAL_TINT[canal] ?? 0xdfeaf2, DUCT_OPACITY, canal);
+      this.ampullaMaterials[canal] = canalColorMaterial(CANAL_TINT[canal] ?? 0xdfeaf2, AMPULLA_OPACITY, canal);
     }
     const CONNECTOR_GLASS = glassMaterial(0xb87fa0, 0.18);
     // Common crus is anatomically just the shared trunk where the canal ducts join --
@@ -331,18 +480,28 @@ export class CanalScene {
     }
   }
 
-  /** Rotates the whole labyrinth to match the current head orientation. */
+  /**
+   * Rotates the whole labyrinth to match the current head orientation -- EXCEPT while a
+   * canal is focused (Micro fluid view), when the labyrinth instead stays frozen upright
+   * (see setFocusedCanal): the point of that view is to isolate the fluid/cupula motion
+   * itself, not to also show the whole model tumbling around under it (reported live --
+   * "no need to have the ear model rotating, we just want to see the fluid movement").
+   */
   setOrientation(qHead: Quat): void {
+    if (this.focusedCanal) return;
     this.headGroup.quaternion.copy(toThreeQuaternion(qHead));
   }
 
   /**
    * Sets which canal's ampulla the "Micro fluid view" camera should glide in on, or null
    * to glide back out to the whole-labyrinth overview -- see updateCameraFocus (called
-   * every render()) for the actual per-frame glide. Purely a camera behavior; doesn't
-   * change what's colored/rendered (setFiringRates/setDebris already do that).
+   * every render()) for the actual per-frame glide. Also freezes/unfreezes headGroup's
+   * rotation (see setOrientation) on the null<->canal transition: entering focus snaps
+   * the labyrinth to upright once (so the camera glide's target is stable, not still
+   * tumbling from whatever orientation the head happened to be in when focus started).
    */
   setFocusedCanal(canal: CanalType | null): void {
+    if (canal && !this.focusedCanal) this.headGroup.quaternion.identity();
     this.focusedCanal = canal;
   }
 
@@ -357,7 +516,10 @@ export class CanalScene {
    */
   private updateCameraFocus(): void {
     if (!this.boundingSphere) return;
-    const MICRO_ZOOM_DISTANCE_FACTOR = 0.045;
+    // Reported live as "way too zoomed in" at 0.045 (camera ended up clipping through
+    // neighboring geometry) -- widened so the focused ampulla + its cupula sit clearly
+    // isolated in frame without the view reading as an abstract close-up of nothing.
+    const MICRO_ZOOM_DISTANCE_FACTOR = 0.11;
     const LERP = 0.12;
 
     let targetLookAt = this.overviewTarget;
@@ -403,6 +565,79 @@ export class CanalScene {
       this.ampullaMaterials[canal]?.color.copy(color);
       this.ampullaMaterials[canal]?.emissive.copy(color);
     }
+  }
+
+  /**
+   * Drives the cupula membrane skew, the duct/ampulla flow-band scroll, and the
+   * fluid-lag/head-motion overlay arrows (Micro fluid view only -- see
+   * claude_micro_view.MD) from this tick's per-canal cupula state (vorEngine.ts's
+   * `beta`, ampullofugal-signed) and the current head angular velocity (HeadFrame).
+   *
+   * The cupula skew and flow-band scroll run for EVERY canal, all the time (cheap
+   * uniform updates, and the cupula membrane is meant to be visible in the normal
+   * overview too, not just when zoomed -- see CUPULA_COLOR's doc comment). The overlay
+   * arrows only make sense for the single canal the camera is currently focused on, so
+   * they're hidden entirely outside Micro fluid view.
+   */
+  setFluidVisuals(cupulaBetas: Record<CanalType, number>, headAngularVelocityHead: [number, number, number]): void {
+    for (const canal of Object.keys(cupulaBetas) as CanalType[]) {
+      const beta = cupulaBetas[canal];
+      const deflection = this.cupulaDeflectionUniforms[canal];
+      if (deflection) deflection.value = THREE.MathUtils.clamp(beta, -CUPULA_SKEW_CLAMP, CUPULA_SKEW_CLAMP) * CUPULA_SKEW_SCALE;
+      const flowPhase = this.flowPhaseUniforms[canal];
+      if (flowPhase) flowPhase.value += beta * FLOW_SCROLL_SPEED;
+    }
+
+    const canal = this.focusedCanal;
+    const anchor = canal ? this.ampullaLocalPositions[canal] : undefined;
+    if (!canal || !anchor) {
+      this.fluidArrow.visible = false;
+      this.headArrow.visible = false;
+      return;
+    }
+
+    const tangent = ductTangent(canal, 'right', 0);
+    const tangentVec = new THREE.Vector3(tangent[0], tangent[1], tangent[2]);
+    const n = CANAL_PLANE_NORMAL[canal][this.side];
+    const omegaProj = new THREE.Vector3(...headAngularVelocityHead).dot(new THREE.Vector3(n[0], n[1], n[2]));
+    // Same ampullofugal-signed convention vorEngine.ts's own `rotationalFlow` term uses
+    // (AMPULLOFUGAL_SIGN * omegaProj) -- see that file/physics/canal.ts's doc comments.
+    const rotationalFlow = AMPULLOFUGAL_SIGN[canal][this.side] * omegaProj;
+    const beta = cupulaBetas[canal] ?? 0;
+
+    // Fluid (endolymph) arrow: driven by the LAGGED cupula beta, so it keeps pointing
+    // (and shrinks only gradually, over cupula.ts's tau) even after the head stops --
+    // this is what actually reproduces the "endolymph momentum" teaching point, not any
+    // special-cased "sudden stop" logic.
+    this.setOverlayArrow(this.fluidArrow, anchor, tangentVec, beta, FLUID_ARROW_LENGTH_SCALE);
+    // Head/wall-motion arrow: driven by the INSTANTANEOUS rotational flow, so it
+    // disappears immediately once the head actually stops, unlike the fluid arrow above.
+    // Deliberately the OPPOSITE sign from the fluid arrow's beta -- physically, the wall
+    // moves opposite to the fluid's RELATIVE (ampullofugal-positive) lag direction (see
+    // physics/canal.ts's AMPULLOFUGAL_SIGN doc comment).
+    this.setOverlayArrow(this.headArrow, anchor, tangentVec, -rotationalFlow, HEAD_ARROW_LENGTH_SCALE);
+  }
+
+  /** Shared helper for the two overlay arrows in setFluidVisuals -- both are positioned
+   * at the same ampulla anchor and point along the same duct-tangent axis, only their
+   * driving signed value and length gain differ. */
+  private setOverlayArrow(
+    arrow: THREE.ArrowHelper,
+    anchor: THREE.Vector3,
+    tangentVec: THREE.Vector3,
+    signedValue: number,
+    lengthScale: number
+  ): void {
+    const length = Math.min(MAX_ARROW_LENGTH, Math.abs(signedValue) * lengthScale);
+    arrow.visible = length > 1e-6;
+    if (!arrow.visible) return;
+    arrow.position.copy(anchor);
+    arrow.setDirection(tangentVec.clone().multiplyScalar(Math.sign(signedValue) || 1).normalize());
+    // headLength/headWidth as a LARGE fraction of the total length (not the
+    // library-default ~0.2/0.2) -- at this scene's tiny (sub-millimeter) scale, a
+    // thin 1px line is barely distinguishable from the surrounding geometry (confirmed
+    // live), so most of the arrow's visible presence needs to come from the cone.
+    arrow.setLength(length, length * 0.6, length * 0.4);
   }
 
   /**

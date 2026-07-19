@@ -553,6 +553,17 @@ function renderFrame(): void {
     canalSceneRight.setFocusedCanal(canals?.right ?? null);
   }
 
+  // After setFocusedCanal above, so the fluid/head overlay arrows (only meaningful for
+  // the currently-focused canal) reflect THIS frame's focus, not last frame's.
+  canalSceneLeft.setFluidVisuals(
+    { horizontal: vorState.cupula.horizontal.left, anterior: vorState.cupula.anterior.left, posterior: vorState.cupula.posterior.left },
+    lastHeadAngularVelocity
+  );
+  canalSceneRight.setFluidVisuals(
+    { horizontal: vorState.cupula.horizontal.right, anterior: vorState.cupula.anterior.right, posterior: vorState.cupula.posterior.right },
+    lastHeadAngularVelocity
+  );
+
   headScene.setOrientation(lastQHead);
 
   if (mode === 'maneuver') {
