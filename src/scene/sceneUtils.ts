@@ -32,7 +32,12 @@ export function makeAmbientAndKeyLight(): THREE.Object3D[] {
   const ambient = new THREE.AmbientLight(0xffffff, 0.6);
   const key = new THREE.DirectionalLight(0xffffff, 0.8);
   key.position.set(2, 3, 4);
-  return [ambient, key];
+  // Fill light from roughly the opposite angle so overlapping translucent canal ducts
+  // pick up a second shading gradient -- with only one key light, ducts facing away from
+  // it read as flat/uniform, which made it hard to tell which duct was in front of which.
+  const fill = new THREE.DirectionalLight(0xffffff, 0.38);
+  fill.position.set(-2, -1, -3);
+  return [ambient, key, fill];
 }
 
 export function createRenderer(canvas: HTMLCanvasElement): THREE.WebGLRenderer {

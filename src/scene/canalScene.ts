@@ -53,20 +53,49 @@ interface EarAnatomyData {
 }
 const EAR_ANATOMY = earAnatomyData as unknown as EarAnatomyData;
 
-// Per-canal tint used ONLY while loading (a neutral placeholder distinguishing the 3
-// canal shapes before the first setFiringRates call lands) -- once firing rates are
-// flowing, the rest color is a uniform neutral grey (see COLOR_REST) so excitation (red)
-// and inhibition (blue) read unambiguously. An earlier version tinted each canal's
-// resting color by type (posterior pink, anterior blue, horizontal green) to also serve
-// as an anatomical legend -- rejected: anterior's resting blue was visually
-// indistinguishable from "inhibited" blue, and posterior's resting pink was too close to
-// "excited" red, defeating the whole point of the color coding. Canal identity is instead
-// read from the ring's real anatomical shape/position (see the legend's ring outlines).
-const CANAL_TINT: Record<CanalType, number> = { posterior: 0xdfeaf2, anterior: 0xdfeaf2, horizontal: 0xdfeaf2 };
+// Distinct per-canal hue for the duct walls -- restores the "which duct is which" legend
+// an earlier all-white/all-grey scheme lost (reported live: with every duct the same pale
+// tint and ~0.4 opacity, overlapping ducts were impossible to tell apart until the model
+// was rotated). This is the duct's fixed identity color, permanently untouched by
+// setFiringRates -- excite/inhibit is instead an additive red/blue GLOW layered on top
+// (see GLOW_MAX_INTENSITY's doc comment), so these hues just need to stay visually
+// distinct from that red/blue glow and from the cupula's fixed yellow (CUPULA_COLOR), not
+// from each other's crossfade path. Anterior was originally a cyan-teal (0x50c8dc) --
+// reported live as too close to the inhibitory blue glow (only ~60 degrees away on the
+// color wheel), swapped for violet/purple instead, which sits far from both red and blue.
+// Posterior's amber was similarly nudged more golden/less red-adjacent for the same
+// reason. Green (horizontal) was already well-separated from both signal colors.
+const CANAL_TINT: Record<CanalType, number> = { posterior: 0xd9a441, anterior: 0x9b7ed8, horizontal: 0x74c69d };
 
 // Lowered from 0.55 -- reported live as too opaque to see the cupula/flow-band overlay
 // (below) through the duct wall once those were added.
 const DUCT_OPACITY = 0.4;
+
+/**
+ * Excite/inhibit is now a red/blue GLOW layered on top of the duct's own fixed CANAL_TINT
+ * identity color, not a replacement for it -- see setFiringRates. `.color` (the lit
+ * albedo) stays permanently at CANAL_TINT; only `.emissive`/`.emissiveIntensity` (additive
+ * self-illumination) swings toward these colors, at zero intensity at rest (no glow) and
+ * up to GLOW_MAX_INTENSITY at the firing-rate extremes. Two prior approaches were tried
+ * and rejected (reported live): a full hue crossfade toward red/blue (collided with/
+ * overwrote the identity hue), then an HSL lightness/saturation-only shift (didn't read as
+ * strongly as the original red/blue). This keeps the identity hue fully intact while still
+ * getting a strong, unambiguous red/blue signal via the glow.
+ */
+const COLOR_EXCITED = new THREE.Color(0xe01b24);
+const COLOR_INHIBITED = new THREE.Color(0x1a5fb4);
+const GLOW_MAX_INTENSITY = 2.2;
+// Eases the firing-rate->glow magnitude curve so a moderate stimulus already reads as a
+// strong, obvious color change instead of needing to approach full COLOR_SATURATION_HZ --
+// exponent < 1 front-loads the swing (e.g. 0.5 magnitude input reaches ~71% of the full
+// swing instead of 50%).
+const DUCT_SIGNAL_EASE_EXPONENT = 0.55;
+
+// Fresnel rim-darkening strength for duct/cupula materials -- grazing-angle surface (the
+// silhouette edge of each duct as seen from the camera) is multiplied down by up to this
+// fraction. Purely a depth/silhouette cue: darkening (not adding a bright/colored rim)
+// avoids introducing any new hue that could compete with the excite/inhibit color coding.
+const RIM_DARKEN_STRENGTH = 0.18;
 
 /**
  * Cupula membrane -- the REAL `<canal>-ampulla.obj` mesh (build.mjs's Cup_Wall.vtk, see
@@ -74,10 +103,14 @@ const DUCT_OPACITY = 0.4;
  * attempt used a synthetic plane-normal-oriented disc here and it never aligned
  * convincingly with the real geometry regardless of tuning (reported live) -- using the
  * actual mesh instead sidesteps that alignment problem entirely, since there's nothing
- * to align, it just IS the cupula. Given its own solid, high-visibility color (distinct
- * from the excite/inhibit duct coloring it used to share) so it reads as its own
- * anatomical structure, and hinge-rotated by cupula deflection -- see
- * buildCupulaHinge/setFluidVisuals.
+ * to align, it just IS the cupula. Fixed, solid, high-visibility color (distinct from any
+ * duct hue or excite/inhibit signal color) purely for anatomical identification -- an
+ * intermediate version made this the PRIMARY excite/inhibit signal instead, one material
+ * per canal swinging grey->red/blue; reverted (reported live: the clear ampulla wall that
+ * change required to keep the signal visible made the surrounding bony structure hard to
+ * read). The excite/inhibit signal now lives entirely on the duct via HSL
+ * lightness/saturation modulation -- see setFiringRates. Hinge-rotated by cupula
+ * deflection -- see buildCupulaHinge/setFluidVisuals.
  */
 const CUPULA_COLOR = 0xffe000;
 const CUPULA_OPACITY = 0.85;
@@ -190,8 +223,6 @@ const GIZMO_COLOR_SI = 0x6aa8d9;
 const GIZMO_COLOR_LATMED = 0x6ad98a;
 
 const COLOR_REST = new THREE.Color(0x9aa3ab);
-const COLOR_INHIBITED = new THREE.Color(0x1a5fb4);
-const COLOR_EXCITED = new THREE.Color(0xe01b24);
 /**
  * Firing-rate delta (Hz, from baseline) at which the excite/inhibit color reaches FULL
  * saturation. Deliberately much smaller than the physiological ceiling/floor's full range
@@ -199,8 +230,11 @@ const COLOR_EXCITED = new THREE.Color(0xe01b24);
  * over that full range meant an ordinary moderate head turn (tens of Hz of delta) barely
  * nudged the color, reading as "no visible change" against the base tint. This value is a
  * visualization choice (how sensitive the color should look), not a physiological one.
+ * Lowered from 60 -- even with the cupula as the primary indicator (see cupulaMaterials),
+ * reported live as still too subtle at 60; a smaller saturation window means an ordinary
+ * head turn now reaches much closer to full red/blue.
  */
-const COLOR_SATURATION_HZ = 60;
+const COLOR_SATURATION_HZ = 30;
 
 /** Otoconia clot color -- gold, matching clinical illustration convention (old app's
  * PARTICLE_OFFSETS cluster, see physics research notes), deliberately distinct from both
@@ -242,6 +276,13 @@ export class CanalScene {
    * a single (wrong) combined rotation. */
   private readonly labyrinthGroup = new THREE.Group();
   private readonly ductMaterials: Record<CanalType, THREE.MeshPhysicalMaterial> = {} as Record<
+    CanalType,
+    THREE.MeshPhysicalMaterial
+  >;
+  /** One material per canal (not one shared instance) so the cupula's primary
+   * excite/inhibit swing (see setFiringRates) can differ per canal, same reasoning as
+   * ductMaterials above. */
+  private readonly cupulaMaterials: Record<CanalType, THREE.MeshPhysicalMaterial> = {} as Record<
     CanalType,
     THREE.MeshPhysicalMaterial
   >;
@@ -551,18 +592,43 @@ export class CanalScene {
         depthWrite: false,
         side: THREE.DoubleSide,
       });
-      if (flowCanal) {
+      const flowUniform = flowCanal ? this.flowPhaseUniforms[flowCanal] ?? { value: 0 } : null;
+      const flowAxis = flowCanal ? ductTangent(flowCanal, 'right', 0) : null;
+      if (flowCanal && flowUniform) {
+        this.flowPhaseUniforms[flowCanal] = flowUniform;
+      }
+      material.onBeforeCompile = (shader) => {
+        // Fresnel rim darkening -- applied to every duct/cupula mesh unconditionally
+        // (not just the flow-carrying canals) so the whole set gets a consistent
+        // silhouette-depth cue. See RIM_DARKEN_STRENGTH's doc comment.
+        shader.uniforms.uRimStrength = { value: RIM_DARKEN_STRENGTH };
+        shader.vertexShader = shader.vertexShader
+          .replace('#include <common>', '#include <common>\nvarying vec3 vRimViewDir;\nvarying vec3 vRimNormal;')
+          .replace(
+            '#include <begin_vertex>',
+            '#include <begin_vertex>\n vRimNormal = normalize(normalMatrix * normal);\n vRimViewDir = normalize(-(modelViewMatrix * vec4(position, 1.0)).xyz);'
+          );
+        shader.fragmentShader = shader.fragmentShader
+          .replace(
+            '#include <common>',
+            '#include <common>\nuniform float uRimStrength;\nvarying vec3 vRimViewDir;\nvarying vec3 vRimNormal;'
+          )
+          .replace(
+            '#include <dithering_fragment>',
+            `
+  float rimFresnel = 1.0 - clamp(dot(normalize(vRimNormal), normalize(vRimViewDir)), 0.0, 1.0);
+  gl_FragColor.rgb *= 1.0 - rimFresnel * uRimStrength;
+  #include <dithering_fragment>`
+          );
+
         // Endolymph-flow illustration: a moving band pattern travelling along this
         // canal's own duct-tangent-at-the-ampulla axis (a fixed direction, not a true
         // per-vertex tangent field along the whole curved duct -- a simplification, see
         // this constant's own doc comment) -- phase driven by cupula beta (ampullofugal-
         // signed, same convention as vorEngine.ts), not raw instantaneous head velocity,
         // so it decays/persists the same way the cupula membrane's own skew does.
-        const flowUniform = this.flowPhaseUniforms[flowCanal] ?? { value: 0 };
-        this.flowPhaseUniforms[flowCanal] = flowUniform;
-        const t = ductTangent(flowCanal, 'right', 0);
-        const axis = new THREE.Vector3(t[0], t[1], t[2]);
-        material.onBeforeCompile = (shader) => {
+        if (flowCanal && flowUniform && flowAxis) {
+          const axis = new THREE.Vector3(flowAxis[0], flowAxis[1], flowAxis[2]);
           shader.uniforms.uFlowPhase = flowUniform;
           shader.uniforms.uFlowAxis = { value: axis };
           shader.uniforms.uFlowIntensity = this.flowIntensityUniform;
@@ -589,25 +655,34 @@ export class CanalScene {
   gl_FragColor.rgb *= 1.0 - flowBand * 0.55 * uFlowIntensity;
   #include <dithering_fragment>`
             );
-        };
-      }
+        }
+      };
       return material;
     };
 
     for (const canal of Object.keys(EAR_ANATOMY.canals) as CanalType[]) {
       this.ductMaterials[canal] = canalColorMaterial(CANAL_TINT[canal] ?? 0xdfeaf2, DUCT_OPACITY, canal);
+      // No glow until the first setFiringRates call -- canalColorMaterial defaults
+      // .emissive to the same value as .color at full intensity (right for the
+      // non-signal-carrying materials that also use this factory, e.g. COMMON_CRUS_GLASS
+      // below), which would otherwise flash the duct as an unwanted extra-bright
+      // color-doubled glow before any real firing rate has landed.
+      this.ductMaterials[canal].emissive.set(0x000000);
+      this.ductMaterials[canal].emissiveIntensity = 0;
+      // Fixed high-visibility color, not touched by setFiringRates -- see CUPULA_COLOR's
+      // doc comment for why this reverted from a per-canal excite/inhibit signal.
+      this.cupulaMaterials[canal] = new THREE.MeshPhysicalMaterial({
+        color: CUPULA_COLOR,
+        emissive: CUPULA_COLOR,
+        emissiveIntensity: 0.4,
+        transparent: true,
+        opacity: CUPULA_OPACITY,
+        roughness: 0.4,
+        metalness: 0,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
     }
-    const CUPULA_MATERIAL = new THREE.MeshPhysicalMaterial({
-      color: CUPULA_COLOR,
-      emissive: CUPULA_COLOR,
-      emissiveIntensity: 0.4,
-      transparent: true,
-      opacity: CUPULA_OPACITY,
-      roughness: 0.4,
-      metalness: 0,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    });
     const CONNECTOR_GLASS = glassMaterial(0xb87fa0, 0.18);
     // Common crus is anatomically just the shared trunk where the canal ducts join --
     // tinted the same as the ducts' resting color (COLOR_REST) and given the same emissive
@@ -643,7 +718,7 @@ export class CanalScene {
         const resolved = resolveAssetUrl(anatomy.ampullaMesh, import.meta.env.BASE_URL, window.location.origin);
         const obj = await loader.loadAsync(resolved);
         obj.traverse((child) => {
-          if (child instanceof THREE.Mesh) child.material = CUPULA_MATERIAL;
+          if (child instanceof THREE.Mesh) child.material = this.cupulaMaterials[canal];
         });
         const base = new THREE.Vector3(...anatomy.cupula.base);
         const pivot = new THREE.Group();
@@ -843,30 +918,32 @@ export class CanalScene {
   }
 
   /**
-   * Colors each canal's duct+ampulla mesh by its current firing rate (Hz): baseline
-   * (~FIRING_BASELINE_HZ) reads as neutral grey, rising above baseline lerps toward red
-   * (excited), dropping below lerps toward blue (inhibited) -- saturating at
-   * +-COLOR_SATURATION_HZ from baseline, not at the physiological floor/ceiling (see that
-   * constant's doc comment for why). FIRING_BASELINE_HZ is still imported from
-   * physics/params.ts (not a second hardcoded copy) so the REST point stays consistent
-   * with the physics engine's own scale, even though the saturation RANGE around it is a
-   * separate visualization choice.
+   * Glows each canal's duct+ampulla mesh red (excited) or blue (inhibited) by its current
+   * firing rate (Hz), ON TOP OF its fixed CANAL_TINT identity color -- `.color` (the lit
+   * albedo) is set once at material creation and never touched here; only
+   * `.emissive`/`.emissiveIntensity` (additive self-illumination) respond to firing rate,
+   * at zero intensity (no glow) at baseline (~FIRING_BASELINE_HZ) ramping up to
+   * GLOW_MAX_INTENSITY at +-COLOR_SATURATION_HZ from baseline (not the physiological
+   * floor/ceiling -- see that constant's doc comment for why). FIRING_BASELINE_HZ is still
+   * imported from physics/params.ts (not a second hardcoded copy) so the REST point stays
+   * consistent with the physics engine's own scale.
    *
-   * Drives BOTH .color (the lit albedo) AND .emissive (self-illumination) with the same
-   * value, not just .color: these materials are glassy (high clearcoat, low roughness,
-   * transparent) so under this scene's lighting, perceived surface color is dominated by
-   * specular highlights reflecting the (white) key light, not the albedo -- confirmed
-   * live (material.color read back as pure 0xe01b24 red while the rendered duct still
-   * looked pale/grey). Emissive isn't subject to that lighting-dependent washout, so it's
-   * what actually makes the excitation/inhibition color visible.
+   * Two prior approaches (full hue crossfade, then HSL lightness/saturation shift -- see
+   * GLOW_MAX_INTENSITY's doc comment) are superseded by this one: an additive colored glow
+   * reads as strongly as the original red/blue crossfade while leaving the base albedo
+   * (and therefore per-canal identity) completely untouched.
    */
   setFiringRates(rates: Record<CanalType, number>): void {
     for (const canal of Object.keys(rates) as CanalType[]) {
       const hz = rates[canal];
       const t = Math.max(-1, Math.min(1, (hz - FIRING_BASELINE_HZ) / COLOR_SATURATION_HZ));
-      const color = t >= 0 ? COLOR_REST.clone().lerp(COLOR_EXCITED, t) : COLOR_REST.clone().lerp(COLOR_INHIBITED, -t);
-      this.ductMaterials[canal]?.color.copy(color);
-      this.ductMaterials[canal]?.emissive.copy(color);
+      const magnitude = Math.pow(Math.abs(t), DUCT_SIGNAL_EASE_EXPONENT);
+      const glowColor = t >= 0 ? COLOR_EXCITED : COLOR_INHIBITED;
+
+      const material = this.ductMaterials[canal];
+      if (!material) continue;
+      material.emissive.copy(glowColor);
+      material.emissiveIntensity = magnitude * GLOW_MAX_INTENSITY;
     }
   }
 
