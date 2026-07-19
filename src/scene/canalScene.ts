@@ -25,6 +25,11 @@ import earAnatomyData from './earAnatomy.json';
  */
 interface EarAnatomyCanal {
   ductMesh: string;
+  /** The real cupula WALL mesh (build.mjs's `ls_Hsapiens_{Ant,Lat,Post}_Cup_Wall.vtk`,
+   * exported as `<canal>-ampulla.obj`) -- despite the field name (kept for JSON
+   * backwards-compat with earlier scene code), this IS the cupula membrane itself, not
+   * the surrounding bony ampulla (that's ampullaBulgeMesh below). See
+   * buildCupulaHinge/CUPULA_COLOR for how this scene renders and animates it. */
   ampullaMesh: string;
   connectorMesh: string;
   ampullaBulgeMesh: string;
@@ -33,6 +38,11 @@ interface EarAnatomyCanal {
    * (see focusOnCanal/updateCameraFocus) to target this canal's ampulla -- distinct from
    * ductMesh's own geometry origin, which OBJLoader leaves in the mesh's local space. */
   ampullaAnchor: [number, number, number];
+  /** Real cupula base (crista/duct-floor anchor, where the membrane is physically
+   * hinged) and apex (dome tip), raw right-ear HeadFrame meters -- from build.mjs's
+   * H_inner/H_outer calipers. Used as the pivot point + hinge-axis reference for the
+   * cupula wall mesh's deflection animation (see buildCupulaHinge). */
+  cupula: { base: [number, number, number]; apex: [number, number, number] };
 }
 interface EarAnatomyData {
   side: 'left' | 'right';
@@ -57,25 +67,37 @@ const CANAL_TINT: Record<CanalType, number> = { posterior: 0xdfeaf2, anterior: 0
 // Lowered from 0.55 -- reported live as too opaque to see the cupula/flow-band overlay
 // (below) through the duct wall once those were added.
 const DUCT_OPACITY = 0.4;
-const AMPULLA_OPACITY = 0.75;
 
 /**
- * Cupula membrane visualization: NOT a 3D mesh in this scene (tried a procedural,
- * plane-normal-oriented disc here -- reported live as never aligning convincingly with
- * the real ampulla geometry regardless of tuning, since the real membrane's true pose
- * isn't actually recoverable from CANAL_PLANE_NORMAL alone). Replaced with a static 2D
- * reference diagram overlay instead (see index.html's #cupula-diagram-left/-right,
- * main.ts's Micro fluid view wiring) -- a schematic illustration, mirrored/rotated by
- * CSS per side and per cupula deflection, rather than a misleadingly-precise 3D object.
+ * Cupula membrane -- the REAL `<canal>-ampulla.obj` mesh (build.mjs's Cup_Wall.vtk, see
+ * EarAnatomyCanal.ampullaMesh's doc comment), not a procedural stand-in: an earlier
+ * attempt used a synthetic plane-normal-oriented disc here and it never aligned
+ * convincingly with the real geometry regardless of tuning (reported live) -- using the
+ * actual mesh instead sidesteps that alignment problem entirely, since there's nothing
+ * to align, it just IS the cupula. Given its own solid, high-visibility color (distinct
+ * from the excite/inhibit duct coloring it used to share) so it reads as its own
+ * anatomical structure, and hinge-rotated by cupula deflection -- see
+ * buildCupulaHinge/setFluidVisuals.
  */
+const CUPULA_COLOR = 0xffe000;
+const CUPULA_OPACITY = 0.85;
+/**
+ * Degrees the cupula wall mesh tilts (about its real base-anchored hinge, see
+ * buildCupulaHinge) per unit of vorEngine.ts's cupula `beta`. A visualization gain --
+ * beta itself is dimensionless (roughly O(0.1-1) for a brisk head rotation, see
+ * cupula.ts's Steinhausen filter), not a physical membrane angle.
+ */
+const CUPULA_TILT_DEG_PER_BETA = 20;
+const CUPULA_TILT_CLAMP = 1.5;
 
-/** Endolymph-lag (yellow) and head/wall-motion (green) overlay arrows shown next to the
+/** Endolymph-lag (orange) and head/wall-motion (green) overlay arrows shown next to the
  * currently-focused canal's ampulla in Micro fluid view -- see setFluidVisuals. The
  * reference teaching spec (claude_micro_view.MD) called for a bright WHITE fluid arrow,
  * but this scene's own ducts/ampullae are themselves pale grey/white (see CANAL_TINT) --
- * confirmed live that a white arrow all but disappeared against them. Yellow keeps the
- * "distinct, high-visibility" intent without the contrast failure. */
-const FLUID_ARROW_COLOR = 0xffe135;
+ * confirmed live that a white arrow all but disappeared against them. Orange (not the
+ * cupula wall's own yellow, to avoid the two being confused for the same signal) keeps
+ * the "distinct, high-visibility" intent without the contrast failure. */
+const FLUID_ARROW_COLOR = 0xff9500;
 const HEAD_ARROW_COLOR = 0x33ff66;
 /** Visualization gains turning cupula beta / raw angular velocity (rad/s) into arrow
  * length (meters) -- tuned so a brisk head turn draws a clearly visible, but not
@@ -144,10 +166,18 @@ export class CanalScene {
     CanalType,
     THREE.MeshPhysicalMaterial
   >;
-  private readonly ampullaMaterials: Record<CanalType, THREE.MeshPhysicalMaterial> = {} as Record<
-    CanalType,
-    THREE.MeshPhysicalMaterial
-  >;
+  /** Per-canal group (duct + ampulla bulge + connector + cupula) -- see
+   * setFocusedCanal, which hides the two non-focused canals' groups while one is
+   * focused in Micro fluid view. */
+  private readonly canalGroups: Partial<Record<CanalType, THREE.Group>> = {};
+  /** Pivot group per canal wrapping the loaded cupula wall mesh, positioned at that
+   * canal's real cupula.base landmark so rotating the pivot tilts the mesh about its
+   * true anatomical hinge point -- see buildCupulaHinge/setFluidVisuals. */
+  private readonly cupulaPivots: Partial<Record<CanalType, THREE.Group>> = {};
+  /** Hinge axis per canal (labyrinthGroup-local, raw right-ear frame), perpendicular to
+   * both the ampullofugal flow tangent and the cupula's own base->apex axis -- see
+   * buildCupulaHinge for the derivation. */
+  private readonly cupulaHingeAxes: Partial<Record<CanalType, THREE.Vector3>> = {};
   private boundingSphere: { center: THREE.Vector3; radius: number } | null = null;
   /** Otoconia clot cluster (BPPV canalithiasis debris marker), hidden until setDebris is
    * called with a non-null selection -- see physics/canalith.ts's arc-length model. */
@@ -312,8 +342,18 @@ export class CanalScene {
 
     for (const canal of Object.keys(EAR_ANATOMY.canals) as CanalType[]) {
       this.ductMaterials[canal] = canalColorMaterial(CANAL_TINT[canal] ?? 0xdfeaf2, DUCT_OPACITY, canal);
-      this.ampullaMaterials[canal] = canalColorMaterial(CANAL_TINT[canal] ?? 0xdfeaf2, AMPULLA_OPACITY, canal);
     }
+    const CUPULA_MATERIAL = new THREE.MeshPhysicalMaterial({
+      color: CUPULA_COLOR,
+      emissive: CUPULA_COLOR,
+      emissiveIntensity: 0.4,
+      transparent: true,
+      opacity: CUPULA_OPACITY,
+      roughness: 0.4,
+      metalness: 0,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
     const CONNECTOR_GLASS = glassMaterial(0xb87fa0, 0.18);
     // Common crus is anatomically just the shared trunk where the canal ducts join --
     // tinted the same as the ducts' resting color (COLOR_REST) and given the same emissive
@@ -326,25 +366,78 @@ export class CanalScene {
     const UTRICLE_GLASS = glassMaterial(CLOT_COLOR, 0.16);
     const SACCULE_GLASS = glassMaterial(CLOT_COLOR, 0.2);
 
-    const loadInto = async (url: string, material: THREE.Material) => {
+    const loadInto = async (url: string, material: THREE.Material, parent: THREE.Object3D = this.labyrinthGroup) => {
       try {
         const resolved = resolveAssetUrl(url, import.meta.env.BASE_URL, window.location.origin);
         const obj = await loader.loadAsync(resolved);
         obj.traverse((child) => {
           if (child instanceof THREE.Mesh) child.material = material;
         });
-        this.labyrinthGroup.add(obj);
+        parent.add(obj);
       } catch (err) {
         console.warn(`Real anatomy mesh at ${url} failed to load.`, err);
       }
     };
 
+    // Cupula wall mesh, wrapped in a pivot group anchored at the REAL cupula.base
+    // landmark (not the mesh's own bounding-box center or a guessed point) -- see
+    // buildCupulaHinge/setFluidVisuals for why: rotating that pivot tilts the mesh about
+    // its true anatomical hinge, exactly like a swinging door anchored at the base while
+    // its dome tip (apex) sweeps sideways.
+    const loadCupulaWall = async (canal: CanalType, anatomy: EarAnatomyCanal, parent: THREE.Object3D) => {
+      try {
+        const resolved = resolveAssetUrl(anatomy.ampullaMesh, import.meta.env.BASE_URL, window.location.origin);
+        const obj = await loader.loadAsync(resolved);
+        obj.traverse((child) => {
+          if (child instanceof THREE.Mesh) child.material = CUPULA_MATERIAL;
+        });
+        const base = new THREE.Vector3(...anatomy.cupula.base);
+        const pivot = new THREE.Group();
+        pivot.position.copy(base);
+        // The mesh's own vertices are already absolute (labyrinthGroup-local) positions
+        // (see build.mjs's ASSEMBLY_ANCHOR translation) -- offsetting the mesh by -base
+        // under a pivot placed AT base keeps its rendered position unchanged while
+        // idle (pivot.position + mesh.position == base + (-base) == 0 relative
+        // displacement), so rotating the pivot rotates the mesh about that real point,
+        // not about the mesh's own (anatomically meaningless) local origin.
+        obj.position.copy(base).negate();
+        pivot.add(obj);
+        parent.add(pivot);
+        this.cupulaPivots[canal] = pivot;
+
+        const apex = new THREE.Vector3(...anatomy.cupula.apex);
+        const hingeStem = apex.clone().sub(base).normalize();
+        const tangent = ductTangent(canal, 'right', 0);
+        const tangentVec = new THREE.Vector3(tangent[0], tangent[1], tangent[2]);
+        // Perpendicular to both the ampullofugal flow direction and the base->apex
+        // "stem" axis -- the natural bending axis for a membrane hinged at its base and
+        // swept sideways (in the flow direction) at its apex, same idea as swinging a
+        // door: the hinge axis is perpendicular to both the door's own face-normal-ish
+        // swing direction and the vertical hinge line itself.
+        const hingeAxis = new THREE.Vector3().crossVectors(tangentVec, hingeStem).normalize();
+        this.cupulaHingeAxes[canal] = hingeAxis;
+      } catch (err) {
+        console.warn(`Cupula wall mesh at ${anatomy.ampullaMesh} failed to load.`, err);
+      }
+    };
+
     for (const [canal, anatomy] of Object.entries(EAR_ANATOMY.canals) as [CanalType, EarAnatomyCanal][]) {
-      await loadInto(anatomy.ductMesh, this.ductMaterials[canal]);
-      await loadInto(anatomy.ampullaMesh, this.ampullaMaterials[canal]);
-      await loadInto(anatomy.ampullaBulgeMesh, this.ductMaterials[canal]);
-      await loadInto(anatomy.connectorMesh, CONNECTOR_GLASS);
-      if (anatomy.canalUtricleWallMesh) await loadInto(anatomy.canalUtricleWallMesh, COMMON_CRUS_GLASS);
+      // Everything specific to this ONE canal (its own duct, ampulla bulge, connector,
+      // cupula) lives under a per-canal group -- see setFocusedCanal, which hides the
+      // OTHER two canals' groups while one is focused in Micro fluid view (reported
+      // live: with all three canals rendered, the non-focused ones were confusing
+      // clutter around the one actually being demonstrated). Shared central structures
+      // (common crus, utricle, saccule, below) are NOT per-canal, so they stay visible
+      // regardless of focus.
+      const canalGroup = new THREE.Group();
+      this.canalGroups[canal] = canalGroup;
+      this.labyrinthGroup.add(canalGroup);
+
+      await loadInto(anatomy.ductMesh, this.ductMaterials[canal], canalGroup);
+      await loadCupulaWall(canal, anatomy, canalGroup);
+      await loadInto(anatomy.ampullaBulgeMesh, this.ductMaterials[canal], canalGroup);
+      await loadInto(anatomy.connectorMesh, CONNECTOR_GLASS, canalGroup);
+      if (anatomy.canalUtricleWallMesh) await loadInto(anatomy.canalUtricleWallMesh, COMMON_CRUS_GLASS, canalGroup);
     }
     await loadInto(EAR_ANATOMY.commonCrusMesh, COMMON_CRUS_GLASS);
     await loadInto(EAR_ANATOMY.utricleMesh, UTRICLE_GLASS);
@@ -433,10 +526,18 @@ export class CanalScene {
    * rotation (see setOrientation) on the null<->canal transition: entering focus snaps
    * the labyrinth to upright once (so the camera glide's target is stable, not still
    * tumbling from whatever orientation the head happened to be in when focus started).
+   *
+   * Also hides the OTHER two canals' own groups while one is focused (reported live:
+   * with all three rendered, the non-focused canals cluttered/confused the close-up on
+   * the one actually being demonstrated) -- shared central structures (utricle, common
+   * crus, saccule) aren't part of any canalGroup, so they stay visible regardless.
    */
   setFocusedCanal(canal: CanalType | null): void {
     if (canal && !this.focusedCanal) this.headGroup.quaternion.identity();
     this.focusedCanal = canal;
+    for (const [otherCanal, group] of Object.entries(this.canalGroups) as [CanalType, THREE.Group][]) {
+      group.visible = canal === null || otherCanal === canal;
+    }
   }
 
   /**
@@ -496,27 +597,33 @@ export class CanalScene {
       const color = t >= 0 ? COLOR_REST.clone().lerp(COLOR_EXCITED, t) : COLOR_REST.clone().lerp(COLOR_INHIBITED, -t);
       this.ductMaterials[canal]?.color.copy(color);
       this.ductMaterials[canal]?.emissive.copy(color);
-      this.ampullaMaterials[canal]?.color.copy(color);
-      this.ampullaMaterials[canal]?.emissive.copy(color);
     }
   }
 
   /**
-   * Drives the duct/ampulla flow-band scroll and the fluid-lag/head-motion overlay
-   * arrows (Micro fluid view only -- see claude_micro_view.MD) from this tick's
-   * per-canal cupula state (vorEngine.ts's `beta`, ampullofugal-signed) and the current
-   * head angular velocity (HeadFrame). The cupula MEMBRANE itself is no longer a 3D
-   * object here -- see this file's CUPULA doc comment -- so its own deflection is shown
-   * via the 2D reference diagram in main.ts instead, not driven from this method.
+   * Drives the cupula wall mesh's hinge tilt, the duct/ampulla flow-band scroll, and the
+   * fluid-lag/head-motion overlay arrows (Micro fluid view only -- see
+   * claude_micro_view.MD) from this tick's per-canal cupula state (vorEngine.ts's
+   * `beta`, ampullofugal-signed) and the current head angular velocity (HeadFrame).
    *
-   * The flow-band scroll runs for EVERY canal, all the time (cheap uniform update). The
-   * overlay arrows only make sense for the single canal the camera is currently focused
-   * on, so they're hidden entirely outside Micro fluid view.
+   * The cupula tilt and flow-band scroll run for EVERY canal, all the time (cheap
+   * per-canal updates, and the cupula membrane is meant to be visible in the normal
+   * overview too, not just when zoomed -- see CUPULA_COLOR's doc comment). The overlay
+   * arrows only make sense for the single canal the camera is currently focused on, so
+   * they're hidden entirely outside Micro fluid view.
    */
   setFluidVisuals(cupulaBetas: Record<CanalType, number>, headAngularVelocityHead: [number, number, number]): void {
     for (const canal of Object.keys(cupulaBetas) as CanalType[]) {
+      const beta = cupulaBetas[canal];
       const flowPhase = this.flowPhaseUniforms[canal];
-      if (flowPhase) flowPhase.value += cupulaBetas[canal] * FLOW_SCROLL_SPEED;
+      if (flowPhase) flowPhase.value += beta * FLOW_SCROLL_SPEED;
+
+      const pivot = this.cupulaPivots[canal];
+      const hingeAxis = this.cupulaHingeAxes[canal];
+      if (pivot && hingeAxis) {
+        const deg = THREE.MathUtils.clamp(beta, -CUPULA_TILT_CLAMP, CUPULA_TILT_CLAMP) * CUPULA_TILT_DEG_PER_BETA;
+        pivot.quaternion.setFromAxisAngle(hingeAxis, THREE.MathUtils.degToRad(deg));
+      }
     }
 
     const canal = this.focusedCanal;
