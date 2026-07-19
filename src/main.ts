@@ -13,6 +13,7 @@ import { MouseDragSource } from './sensors/mouseDragSource';
 import { EyeScene } from './scene/eyeScene';
 import { CanalScene } from './scene/canalScene';
 import { HeadScene } from './scene/headScene';
+import { resolveAssetUrl } from './scene/assetPaths';
 
 import { Controls, PlaybackMode, ManeuverKey } from './ui/controls';
 import { Maneuver } from './maneuvers/types';
@@ -220,6 +221,29 @@ function computeAutoActivePlane(rates: typeof lastFiringRates): MicroPlane | nul
     }
   }
   return best;
+}
+
+// Static 2D cupula-deflection reference diagram (see docs/Ampulla_of_SemicircularCanal.svg,
+// copied into public/images so it's servable) -- replaces an earlier attempt at a
+// procedural 3D cupula mesh in canalScene.ts, which never aligned convincingly with the
+// real ampulla geometry regardless of tuning (reported live). Shown only while a canal
+// is focused in Micro fluid view, one per ear panel, rotated by that canal's live cupula
+// deflection and mirrored for the left ear (the source diagram depicts one ear only).
+const cupulaDiagramLeft = document.getElementById('cupula-diagram-left') as HTMLImageElement;
+const cupulaDiagramRight = document.getElementById('cupula-diagram-right') as HTMLImageElement;
+const CUPULA_DIAGRAM_URL = resolveAssetUrl('/images/ampulla-cupula.svg', import.meta.env.BASE_URL, window.location.origin);
+cupulaDiagramLeft.src = CUPULA_DIAGRAM_URL;
+cupulaDiagramRight.src = CUPULA_DIAGRAM_URL;
+/** Degrees of diagram tilt per unit of cupula beta -- schematic (this is a static
+ * illustration being rotated, not a true redraw of the membrane's own bend), tuned so a
+ * brisk head rotation gives a clearly visible tilt without spinning the diagram wildly. */
+const CUPULA_DIAGRAM_DEG_PER_BETA = 22;
+
+function updateCupulaDiagram(img: HTMLImageElement, side: EarSide, canal: CanalType | null, beta: number): void {
+  img.hidden = canal === null;
+  if (canal === null) return;
+  const deg = Math.max(-35, Math.min(35, beta * CUPULA_DIAGRAM_DEG_PER_BETA));
+  img.style.transform = `${side === 'left' ? 'scaleX(-1) ' : ''}rotate(${deg}deg)`;
 }
 
 // About popover -- cites the academic source for the real-anatomy meshes (IE-Map).
@@ -551,6 +575,11 @@ function renderFrame(): void {
     const canals = plane ? PLANE_CANAL_BY_SIDE[plane] : null;
     canalSceneLeft.setFocusedCanal(canals?.left ?? null);
     canalSceneRight.setFocusedCanal(canals?.right ?? null);
+    updateCupulaDiagram(cupulaDiagramLeft, 'left', canals?.left ?? null, canals ? vorState.cupula[canals.left].left : 0);
+    updateCupulaDiagram(cupulaDiagramRight, 'right', canals?.right ?? null, canals ? vorState.cupula[canals.right].right : 0);
+  } else {
+    cupulaDiagramLeft.hidden = true;
+    cupulaDiagramRight.hidden = true;
   }
 
   // After setFocusedCanal above, so the fluid/head overlay arrows (only meaningful for

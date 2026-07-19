@@ -446,6 +446,29 @@ body {
   transform: translateX(-50%) translateY(0);
 }
 
+/* Static reference diagram for cupula deflection (see main.ts's Micro fluid view
+ * wiring) -- a real anatomical illustration overlay, not a 3D object in the scene: an
+ * earlier attempt at a procedural 3D cupula mesh never aligned convincingly with the
+ * real ampulla geometry regardless of tuning (reported live), so this replaces it
+ * entirely rather than trying to fix that alignment further. Bottom-right inset,
+ * small enough to read as a supplementary diagram, not competing with the 3D view
+ * it's annotating. Rotation (per cupula deflection) and left-ear mirroring are both
+ * applied via inline style.transform from JS, not here -- see main.ts. */
+.cupula-diagram {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  width: 84px;
+  height: auto;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  pointer-events: none;
+  z-index: 4;
+  transition: transform 0.2s ease;
+}
+
 /* Per-canal-per-ear function toggles (see controls.ts's pathologyToggles) -- a plain
  * checkbox row per (canal, side), listed in the "Canal function" popover. */
 .canal-function-row {
