@@ -99,11 +99,19 @@ const CUPULA_TILT_CLAMP = 1.5;
  * the "distinct, high-visibility" intent without the contrast failure. */
 const FLUID_ARROW_COLOR = 0xff9500;
 const HEAD_ARROW_COLOR = 0x33ff66;
-/** Visualization gains turning cupula beta / raw angular velocity (rad/s) into arrow
- * length (meters) -- tuned so a brisk head turn draws a clearly visible, but not
- * frame-filling, arrow at the micro-zoom's close-up scale. */
-const FLUID_ARROW_LENGTH_SCALE = 0.003;
-const HEAD_ARROW_LENGTH_SCALE = 0.0025;
+/**
+ * Shared visualization gain turning an arrow's driving value into a length (meters).
+ * ONE shared scale (not a separate gain per arrow, which is what this file had before)
+ * -- reported live that the head arrow read as consistently oversized next to the fluid
+ * arrow. That wasn't just a scale mismatch: the fluid arrow's driver (cupula beta) is
+ * tau-damped and stays roughly bounded, while the head arrow's driver (raw
+ * instantaneous angular velocity, rad/s) is unbounded and commonly reaches a larger
+ * peak magnitude for the same "brisk head turn" -- so ARROW_INPUT_CLAMP below clamps
+ * BOTH drivers to the same domain before this same scale is applied, making the two
+ * arrows' sizes genuinely comparable, not just nominally using the same constant.
+ */
+const ARROW_LENGTH_SCALE = 0.003;
+const ARROW_INPUT_CLAMP = 1.5;
 const MAX_ARROW_LENGTH = 0.0035;
 /** Cupula-beta-to-scroll-phase gain for the duct/ampulla flow-band shader (see
  * makeCupulaMaterial's sibling flow-uniform wiring in loadRealAnatomy) -- a
@@ -209,7 +217,16 @@ export class CanalScene {
   /** Fixed viewing direction (anterior + slight elevation), UNNORMALIZED to match
    * fitCamera's own target+viewDir*distance convention exactly (see its doc comment) --
    * both the overview and the micro-zoomed close-up view from the same angle, just at
-   * different distances/targets, so the camera never re-orients, only glides. */
+   * different distances/targets, so the camera never re-orients, only glides.
+   *
+   * A per-side camera-angle offset was tried here (to stop the two ear panels' Micro
+   * fluid view close-ups from reading as mirror images of each other at the shared
+   * panel boundary) and reverted the same day -- it changed the fluid/head arrows'
+   * on-screen READING (reported live as "now incorrect") even though their underlying
+   * direction vectors/signs were untouched, since rotating the camera changes how a
+   * fixed 3D arrow direction projects visually. Arrow-direction correctness takes
+   * priority over that cosmetic mirror-symmetry concern, so both ear panels use this
+   * same fixed angle. */
   private readonly viewDir = new THREE.Vector3(1, 0.25, 0);
 
   // Fluid/head-motion overlay arrows (see setFluidVisuals) -- need this scene's own
@@ -217,6 +234,12 @@ export class CanalScene {
   // side-dependent even though the mesh geometry itself is shared right-ear data,
   // mirrored by labyrinthGroup.scale.y).
   private readonly flowPhaseUniforms: Partial<Record<CanalType, { value: number }>> = {};
+  /** Shared by every canal's duct/ampulla material (see canalColorMaterial's
+   * onBeforeCompile) -- 1 shows the flow-band overlay, 0 hides it entirely. One toggle
+   * for the whole scene, not per-canal: users found the effect "overwhelming... useful
+   * for teaching but not nice to look at all the time" and wanted a single on/off, not
+   * a busier per-canal control -- see main.ts's flow-shading toggle. */
+  private readonly flowIntensityUniform = { value: 0 };
   private readonly fluidArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(), 0, FLUID_ARROW_COLOR);
   private readonly headArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(), 0, HEAD_ARROW_COLOR);
 
@@ -318,11 +341,15 @@ export class CanalScene {
         material.onBeforeCompile = (shader) => {
           shader.uniforms.uFlowPhase = flowUniform;
           shader.uniforms.uFlowAxis = { value: axis };
+          shader.uniforms.uFlowIntensity = this.flowIntensityUniform;
           shader.vertexShader = shader.vertexShader
             .replace('#include <common>', '#include <common>\nuniform vec3 uFlowAxis;\nvarying float vFlowCoord;')
             .replace('#include <begin_vertex>', '#include <begin_vertex>\n vFlowCoord = dot(position, uFlowAxis);');
           shader.fragmentShader = shader.fragmentShader
-            .replace('#include <common>', '#include <common>\nuniform float uFlowPhase;\nvarying float vFlowCoord;')
+            .replace(
+              '#include <common>',
+              '#include <common>\nuniform float uFlowPhase;\nuniform float uFlowIntensity;\nvarying float vFlowCoord;'
+            )
             .replace(
               '#include <dithering_fragment>',
               `
@@ -331,8 +358,11 @@ export class CanalScene {
   // a tight smoothstep window so each band stays a crisp line rather than a broad glow,
   // and DARKENING (multiply down) instead of ADDING brightness so the duct's own
   // excite/inhibit color and the mesh's shading underneath both stay legible.
+  // uFlowIntensity (0 or 1, see main.ts's flow-shading toggle) lets this be turned off
+  // entirely -- reported live as "overwhelming... useful for teaching but not nice to
+  // look at all the time".
   float flowBand = smoothstep(0.94, 1.0, sin(vFlowCoord * 2400.0 - uFlowPhase));
-  gl_FragColor.rgb *= 1.0 - flowBand * 0.55;
+  gl_FragColor.rgb *= 1.0 - flowBand * 0.55 * uFlowIntensity;
   #include <dithering_fragment>`
             );
         };
@@ -551,10 +581,10 @@ export class CanalScene {
    */
   private updateCameraFocus(): void {
     if (!this.boundingSphere) return;
-    // Reported live as "way too zoomed in" at 0.045 (camera ended up clipping through
-    // neighboring geometry) -- widened so the focused ampulla + its cupula sit clearly
-    // isolated in frame without the view reading as an abstract close-up of nothing.
-    const MICRO_ZOOM_DISTANCE_FACTOR = 0.11;
+    // Went 0.045 (reported "way too zoomed in", clipped through neighboring geometry)
+    // -> 0.11 -> widened again here per further feedback wanting more of the ampulla
+    // head and leading duct visible, not just the cupula itself.
+    const MICRO_ZOOM_DISTANCE_FACTOR = 0.16;
     const LERP = 0.12;
 
     let targetLookAt = this.overviewTarget;
@@ -600,6 +630,14 @@ export class CanalScene {
     }
   }
 
+  /** Shows/hides the duct/ampulla flow-band overlay (see canalColorMaterial's
+   * onBeforeCompile) across every canal in this scene. Off by default (see
+   * flowIntensityUniform's own doc comment) -- a deliberate teaching-moment toggle, not
+   * a permanent visual. */
+  setFlowShadingEnabled(enabled: boolean): void {
+    this.flowIntensityUniform.value = enabled ? 1 : 0;
+  }
+
   /**
    * Drives the cupula wall mesh's hinge tilt, the duct/ampulla flow-band scroll, and the
    * fluid-lag/head-motion overlay arrows (Micro fluid view only -- see
@@ -621,7 +659,15 @@ export class CanalScene {
       const pivot = this.cupulaPivots[canal];
       const hingeAxis = this.cupulaHingeAxes[canal];
       if (pivot && hingeAxis) {
-        const deg = THREE.MathUtils.clamp(beta, -CUPULA_TILT_CLAMP, CUPULA_TILT_CLAMP) * CUPULA_TILT_DEG_PER_BETA;
+        // Negated -- verified live (comparing the mesh's actual world displacement
+        // against the fluid arrow's direction via their dot product) that the
+        // un-negated rotation tilted the cupula AGAINST the endolymph flow direction,
+        // not with it. The infinitesimal-rotation derivation this hinge axis was built
+        // from (cross(tangent, base->apex stem)) assumed the mesh's bulk sits along the
+        // stem direction from the pivot -- true for an idealized disc, but not
+        // necessarily for the real Cup_Wall mesh's actual shape/centroid, which is
+        // presumably why the sign came out backwards in practice.
+        const deg = -THREE.MathUtils.clamp(beta, -CUPULA_TILT_CLAMP, CUPULA_TILT_CLAMP) * CUPULA_TILT_DEG_PER_BETA;
         pivot.quaternion.setFromAxisAngle(hingeAxis, THREE.MathUtils.degToRad(deg));
       }
     }
@@ -643,34 +689,45 @@ export class CanalScene {
     const rotationalFlow = AMPULLOFUGAL_SIGN[canal][this.side] * omegaProj;
     const beta = cupulaBetas[canal] ?? 0;
 
-    // Fluid (endolymph) arrow: driven by the LAGGED cupula beta, so it keeps pointing
-    // (and shrinks only gradually, over cupula.ts's tau) even after the head stops --
-    // this is what actually reproduces the "endolymph momentum" teaching point, not any
+    // Fluid (endolymph) arrow: anchored right at the ampulla/cupula (that's what it's
+    // annotating), driven by the LAGGED cupula beta, so it keeps pointing (and shrinks
+    // only gradually, over cupula.ts's tau) even after the head stops -- this is what
+    // actually reproduces the "endolymph momentum" teaching point, not any
     // special-cased "sudden stop" logic.
-    this.setOverlayArrow(this.fluidArrow, anchor, tangentVec, beta, FLUID_ARROW_LENGTH_SCALE);
-    // Head/wall-motion arrow: driven by the INSTANTANEOUS rotational flow, so it
-    // disappears immediately once the head actually stops, unlike the fluid arrow above.
-    // Deliberately the OPPOSITE sign from the fluid arrow's beta -- physically, the wall
-    // moves opposite to the fluid's RELATIVE (ampullofugal-positive) lag direction (see
-    // physics/canal.ts's AMPULLOFUGAL_SIGN doc comment).
-    this.setOverlayArrow(this.headArrow, anchor, tangentVec, -rotationalFlow, HEAD_ARROW_LENGTH_SCALE);
+    this.setOverlayArrow(this.fluidArrow, anchor, tangentVec, beta);
+
+    // Head/wall-motion arrow: reported live as sitting right on top of the anatomy at
+    // the ampulla anchor, competing visually with the cupula/duct it was overlapping --
+    // moved to a fixed point below the focused canal, outside the ring, near the bottom
+    // of the camera's current view (currentDistance-scaled so it stays proportionally
+    // placed whether zoomed in or out). Driven by the INSTANTANEOUS rotational flow, so
+    // it disappears immediately once the head actually stops, unlike the fluid arrow
+    // above. Deliberately the OPPOSITE sign from the fluid arrow's beta -- physically,
+    // the wall moves opposite to the fluid's RELATIVE (ampullofugal-positive) lag
+    // direction (see physics/canal.ts's AMPULLOFUGAL_SIGN doc comment).
+    // 0.32 (not the whole currentDistance) -- currentDistance is the CAMERA's distance
+    // along viewDir from the look target, not the frame's own vertical half-extent;
+    // offsetting by the full distance shot the arrow well outside the visible frustum
+    // (confirmed live: computed position was ~2x the frame's actual vertical extent at
+    // that distance, i.e. entirely off-screen). ~0.35x the distance approximates the
+    // frame's vertical half-extent at this camera's 45deg FOV (tan(22.5deg) ~= 0.41),
+    // staying just inside the visible bottom edge instead of at/past it.
+    const headArrowPos = anchor.clone().addScaledVector(new THREE.Vector3(0, -1, 0), this.currentDistance * 0.32);
+    this.setOverlayArrow(this.headArrow, headArrowPos, tangentVec, -rotationalFlow);
   }
 
-  /** Shared helper for the two overlay arrows in setFluidVisuals -- both are positioned
-   * at the same ampulla anchor and point along the same duct-tangent axis, only their
-   * driving signed value and length gain differ. */
-  private setOverlayArrow(
-    arrow: THREE.ArrowHelper,
-    anchor: THREE.Vector3,
-    tangentVec: THREE.Vector3,
-    signedValue: number,
-    lengthScale: number
-  ): void {
-    const length = Math.min(MAX_ARROW_LENGTH, Math.abs(signedValue) * lengthScale);
+  /** Shared helper for the two overlay arrows in setFluidVisuals -- both point along the
+   * same duct-tangent axis and share one length scale (ARROW_INPUT_CLAMP keeps their
+   * driving values on the same domain first, so the two end up genuinely comparable in
+   * size, not just nominally sharing a constant -- see ARROW_LENGTH_SCALE's doc
+   * comment), only their position and driving value differ. */
+  private setOverlayArrow(arrow: THREE.ArrowHelper, position: THREE.Vector3, tangentVec: THREE.Vector3, signedValue: number): void {
+    const clamped = THREE.MathUtils.clamp(signedValue, -ARROW_INPUT_CLAMP, ARROW_INPUT_CLAMP);
+    const length = Math.min(MAX_ARROW_LENGTH, Math.abs(clamped) * ARROW_LENGTH_SCALE);
     arrow.visible = length > 1e-6;
     if (!arrow.visible) return;
-    arrow.position.copy(anchor);
-    arrow.setDirection(tangentVec.clone().multiplyScalar(Math.sign(signedValue) || 1).normalize());
+    arrow.position.copy(position);
+    arrow.setDirection(tangentVec.clone().multiplyScalar(Math.sign(clamped) || 1).normalize());
     // headLength/headWidth as a LARGE fraction of the total length (not the
     // library-default ~0.2/0.2) -- at this scene's tiny (sub-millimeter) scale, a
     // thin 1px line is barely distinguishable from the surrounding geometry (confirmed

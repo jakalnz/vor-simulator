@@ -199,6 +199,22 @@ for (const btn of canalMicroSubmenu.querySelectorAll<HTMLButtonElement>('button[
   });
 }
 
+// Endolymph flow-band overlay toggle -- independent of Micro fluid view (the bands
+// render on every canal's duct/ampulla all the time, not just the focused one). Off by
+// default: reported live as "a bit overwhelming... useful for teaching but not nice to
+// look at all the time", so it's an opt-in moment, not a permanent visual.
+const canalFlowShadingToggleBtn = document.getElementById('canal-flow-shading-toggle') as HTMLButtonElement;
+let flowShadingEnabled = false;
+canalSceneLeft.setFlowShadingEnabled(flowShadingEnabled);
+canalSceneRight.setFlowShadingEnabled(flowShadingEnabled);
+canalFlowShadingToggleBtn.addEventListener('click', () => {
+  flowShadingEnabled = !flowShadingEnabled;
+  canalSceneLeft.setFlowShadingEnabled(flowShadingEnabled);
+  canalSceneRight.setFlowShadingEnabled(flowShadingEnabled);
+  canalFlowShadingToggleBtn.classList.toggle('is-active', flowShadingEnabled);
+  canalFlowShadingToggleBtn.textContent = `Flow shading: ${flowShadingEnabled ? 'On' : 'Off'}`;
+});
+
 /** Combined (left+right) firing-rate deviation from baseline for one canal PLANE --
  * horizontal is that canal on both ears, LARP/RALP each combine two DIFFERENT canal
  * types across the two ears (see PLANE_CANAL_BY_SIDE's doc comment). */
