@@ -171,6 +171,24 @@ function makeIndicatorCone(color: number): THREE.Mesh {
  * visualization-only scroll speed, not a physical fluid velocity. */
 const FLOW_SCROLL_SPEED = 40;
 
+/**
+ * Orientation gizmo (see buildGizmo/renderGizmo) -- reintroduced from the pre-VOR app
+ * (see that app's own doc comment, git commit 35b847a) per direct user request ("look
+ * at the old gimbal and just replicate that"): a small always-visible axis triad
+ * rendered into a corner viewport of the SAME canvas/renderer (the standard "navigation
+ * cube" technique used by Blender/CAD/ParaView viewports), labeling anterior/posterior/
+ * superior/inferior/lateral/medial. Rotates WITH the anatomy every frame (mirrors
+ * labyrinthGroup's current world rotation), unlike a fixed corner label, so it stays
+ * correct as the head turns.
+ */
+const GIZMO_SIZE_PX = 64;
+const GIZMO_MARGIN_PX = 6;
+const GIZMO_AXIS_LENGTH = 1;
+const GIZMO_CAMERA_DISTANCE = 3;
+const GIZMO_COLOR_AP = 0xd9756a;
+const GIZMO_COLOR_SI = 0x6aa8d9;
+const GIZMO_COLOR_LATMED = 0x6ad98a;
+
 const COLOR_REST = new THREE.Color(0x9aa3ab);
 const COLOR_INHIBITED = new THREE.Color(0x1a5fb4);
 const COLOR_EXCITED = new THREE.Color(0xe01b24);
@@ -293,6 +311,27 @@ export class CanalScene {
    * separate zoom logic) currently uses -- see setViewMode. */
   private overviewViewMode: 'head' | 'lateral' = 'head';
 
+  // Orientation gizmo -- see GIZMO_SIZE_PX's doc comment. A separate scene/camera (not a
+  // child of labyrinthGroup/scene) so it can be drawn into its own small corner
+  // viewport of the same canvas independently of the main render's camera/target/zoom.
+  private readonly gizmoScene = new THREE.Scene();
+  private readonly gizmoCamera = new THREE.OrthographicCamera(-1.4, 1.4, 1.4, -1.4, 0.1, 10);
+  /** Outer group -- receives ONLY the live head-orientation rotation each frame (see
+   * renderGizmo), mirroring headGroup.quaternion, which is always a pure rotation (no
+   * reflection) since qHead itself isn't mirrored. */
+  private readonly gizmoGroup = new THREE.Group();
+  /** Inner, static child of gizmoGroup -- carries the left-ear MIRROR as an actual
+   * scale transform, same split as labyrinthGroup/headGroup. This split matters
+   * specifically because a quaternion CANNOT represent a reflection (determinant -1):
+   * an earlier version of this gizmo tried to mirror it by extracting
+   * labyrinthGroup.getWorldQuaternion() directly, which silently discards the mirror
+   * (quaternions only ever encode pure rotations), so the left ear's gizmo rendered
+   * identically to the right ear's instead of mirrored -- confirmed live (both showed
+   * "Lat" on the same screen side). Splitting the mirror out as a real scale on this
+   * child group, structurally separate from the live rotation on the parent, sidesteps
+   * that entirely. */
+  private readonly gizmoStaticGroup = new THREE.Group();
+
   // Fluid/head-motion overlay arrows (see setFluidVisuals) -- need this scene's own
   // `side` for the physics sign conventions (CANAL_PLANE_NORMAL/AMPULLOFUGAL_SIGN are
   // side-dependent even though the mesh geometry itself is shared right-ear data,
@@ -369,7 +408,115 @@ export class CanalScene {
     // an arrow positioned near them).
     this.labyrinthGroup.add(this.fluidArrow, this.headArrow);
 
+    this.buildGizmo();
+
     this.loadRealAnatomy();
+  }
+
+  /**
+   * Builds the orientation gizmo's three axis pairs -- anterior (+X), superior (+Z),
+   * and lateral. All three are expressed as RAW right-ear HeadFrame vectors (the
+   * lateral pair always -Y, the RIGHT ear's true lateral direction, regardless of this
+   * scene's own side) -- the SAME convention as ductTangent(canal,'right',...)/
+   * CANAL_PLANE_NORMAL[canal]['right'] elsewhere in this file: mirroring for the left
+   * ear is handled structurally, by gizmoStaticGroup's own scale (see its doc comment),
+   * not by flipping vector components here. Attached to gizmoStaticGroup (not
+   * gizmoGroup directly) so that mirror scale actually applies to them.
+   */
+  private buildGizmo(): void {
+    const anteriorDir = new THREE.Vector3(1, 0, 0);
+    const superiorDir = new THREE.Vector3(0, 0, 1);
+    const lateralDir = new THREE.Vector3(0, -1, 0);
+    this.gizmoStaticGroup.add(this.makeGizmoAxisPair(anteriorDir, 'A', 'P', GIZMO_COLOR_AP));
+    this.gizmoStaticGroup.add(this.makeGizmoAxisPair(superiorDir, 'S', 'I', GIZMO_COLOR_SI));
+    this.gizmoStaticGroup.add(this.makeGizmoAxisPair(lateralDir, 'Lat', 'Med', GIZMO_COLOR_LATMED));
+    this.gizmoStaticGroup.quaternion.copy(HEAD_FRAME_TO_THREE);
+    this.gizmoStaticGroup.scale.y = this.side === 'left' ? -1 : 1;
+    this.gizmoGroup.add(this.gizmoStaticGroup);
+    this.gizmoScene.add(this.gizmoGroup);
+  }
+
+  /** One bidirectional axis line plus its two end labels, for the orientation gizmo. */
+  private makeGizmoAxisPair(dir: THREE.Vector3, posLabel: string, negLabel: string, color: number): THREE.Group {
+    const group = new THREE.Group();
+    const geometry = new THREE.BufferGeometry().setFromPoints([
+      dir.clone().multiplyScalar(-GIZMO_AXIS_LENGTH),
+      dir.clone().multiplyScalar(GIZMO_AXIS_LENGTH),
+    ]);
+    const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color }));
+    group.add(line);
+    const posSprite = this.makeGizmoLabel(posLabel, color);
+    posSprite.position.copy(dir.clone().multiplyScalar(GIZMO_AXIS_LENGTH * 1.3));
+    group.add(posSprite);
+    const negSprite = this.makeGizmoLabel(negLabel, color);
+    negSprite.position.copy(dir.clone().multiplyScalar(-GIZMO_AXIS_LENGTH * 1.3));
+    group.add(negSprite);
+    return group;
+  }
+
+  /** Text sprite (canvas-texture billboard) for one gizmo axis-end label. */
+  private makeGizmoLabel(text: string, color: number): THREE.Sprite {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
+    ctx.font = 'bold 44px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+    const texture = new THREE.CanvasTexture(canvas);
+    const material = new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true });
+    const sprite = new THREE.Sprite(material);
+    sprite.scale.set(0.9, 0.45, 1);
+    return sprite;
+  }
+
+  /**
+   * Draws the orientation gizmo into a small corner viewport of the SAME canvas/renderer,
+   * after the main scene render -- the standard technique (Blender/CAD viewport nav
+   * cubes) for an inset that doesn't need its own canvas element. Two things track the
+   * main view every frame: gizmoGroup's rotation mirrors headGroup's current (live head
+   * orientation) rotation -- the static HEAD_FRAME_TO_THREE conversion and left-ear
+   * mirror live separately on gizmoStaticGroup's own fixed transform (see its doc
+   * comment for why) -- and gizmoCamera's rotation mirrors the main camera's rotation
+   * (so the mini triad's
+   * on-screen layout always matches what the main viewport is actually looking at,
+   * including the Head-orientation/Lateral-view angle and Micro fluid view's own zoom)
+   * -- only gizmoCamera's fixed DISTANCE differs from the main camera, since the gizmo
+   * has its own small orthographic frustum.
+   */
+  private renderGizmo(): void {
+    // headGroup.quaternion only (a pure rotation, safe to copy directly) -- NOT
+    // labyrinthGroup's world quaternion, which would silently drop the left ear's
+    // mirror (see gizmoStaticGroup's doc comment). The mirror is instead already baked
+    // into gizmoStaticGroup's own fixed scale, exactly like labyrinthGroup/headGroup.
+    this.gizmoGroup.quaternion.copy(this.headGroup.quaternion);
+    this.gizmoCamera.quaternion.copy(this.camera.quaternion);
+    this.gizmoCamera.position
+      .set(0, 0, 1)
+      .applyQuaternion(this.camera.quaternion)
+      .multiplyScalar(GIZMO_CAMERA_DISTANCE);
+
+    const canvas = this.renderer.domElement;
+    const cssWidth = canvas.clientWidth;
+    const cssHeight = canvas.clientHeight;
+    // setViewport/setScissor take the SAME "logical" (CSS-pixel) units as setSize, not
+    // raw drawing-buffer pixels -- three.js applies the renderer's pixel ratio internally.
+    const size = Math.max(0, Math.min(GIZMO_SIZE_PX, cssWidth * 0.3, cssHeight * 0.3));
+    const x = cssWidth - size - GIZMO_MARGIN_PX;
+    const y = cssHeight - size - GIZMO_MARGIN_PX; // three.js viewport/scissor origin is bottom-left
+
+    this.renderer.setScissorTest(true);
+    this.renderer.setScissor(x, y, size, size);
+    this.renderer.setViewport(x, y, size, size);
+    // Depth only -- the main render's color buffer should show through around/behind the
+    // gizmo's own small square, only that square's own depth needs resetting so the
+    // gizmo's axis lines/labels aren't depth-tested against the (unrelated) main scene.
+    this.renderer.clearDepth();
+    this.renderer.render(this.gizmoScene, this.gizmoCamera);
+    this.renderer.setScissorTest(false);
+    this.renderer.setViewport(0, 0, cssWidth, cssHeight);
   }
 
   private async loadRealAnatomy(): Promise<void> {
@@ -871,5 +1018,6 @@ export class CanalScene {
     }
     this.updateCameraFocus();
     this.renderer.render(this.scene, this.camera);
+    this.renderGizmo();
   }
 }

@@ -171,14 +171,32 @@ let microPlaneMode: 'auto' | MicroPlane = 'auto';
  * overview -- matches the reference spec's "stay at last position if head stationary". */
 let lastAutoPlane: MicroPlane | null = null;
 
+// Endolymph flow-band overlay toggle -- only meaningful (and only offered) inside Micro
+// fluid view: the bands are a close-up teaching detail, and showing the control while
+// zoomed out to the whole-labyrinth overview just added clutter with nothing to explain
+// it. Declared here (ahead of applyMicroUI, which shows/hides it) rather than down by
+// its own click handler below.
+const canalFlowShadingToggleBtn = document.getElementById('canal-flow-shading-toggle') as HTMLButtonElement;
+let flowShadingEnabled = false;
+
 function applyMicroUI(): void {
   canalMicroSubmenu.hidden = !microZoomEnabled;
   canalMicroToggleBtn.classList.toggle('is-active', microZoomEnabled);
   canalMicroToggleBtn.textContent = microZoomEnabled ? 'Exit micro view' : 'Micro fluid view';
+  canalFlowShadingToggleBtn.hidden = !microZoomEnabled;
   if (!microZoomEnabled) {
     lastAutoPlane = null;
     canalSceneLeft.setFocusedCanal(null);
     canalSceneRight.setFocusedCanal(null);
+    // Also turn the effect itself off on exit, not just hide the control -- otherwise
+    // it would keep running invisibly and reappear already-on next time Micro view opens.
+    if (flowShadingEnabled) {
+      flowShadingEnabled = false;
+      canalSceneLeft.setFlowShadingEnabled(false);
+      canalSceneRight.setFlowShadingEnabled(false);
+      canalFlowShadingToggleBtn.classList.remove('is-active');
+      canalFlowShadingToggleBtn.textContent = 'Flow shading: Off';
+    }
   }
 }
 canalMicroToggleBtn.addEventListener('click', () => {
@@ -199,12 +217,6 @@ for (const btn of canalMicroSubmenu.querySelectorAll<HTMLButtonElement>('button[
   });
 }
 
-// Endolymph flow-band overlay toggle -- independent of Micro fluid view (the bands
-// render on every canal's duct/ampulla all the time, not just the focused one). Off by
-// default: reported live as "a bit overwhelming... useful for teaching but not nice to
-// look at all the time", so it's an opt-in moment, not a permanent visual.
-const canalFlowShadingToggleBtn = document.getElementById('canal-flow-shading-toggle') as HTMLButtonElement;
-let flowShadingEnabled = false;
 canalSceneLeft.setFlowShadingEnabled(flowShadingEnabled);
 canalSceneRight.setFlowShadingEnabled(flowShadingEnabled);
 canalFlowShadingToggleBtn.addEventListener('click', () => {
@@ -221,23 +233,7 @@ canalFlowShadingToggleBtn.addEventListener('click', () => {
 // of Micro fluid view, which always keeps its own fixed zoom angle regardless of this.
 const canalOrientToggleBtn = document.getElementById('canal-orient-toggle') as HTMLButtonElement;
 const canalOrientSubmenu = document.getElementById('canal-orient-submenu') as HTMLDivElement;
-const canalGimbalLeft = document.getElementById('canal-gimbal-left') as HTMLDivElement;
-const canalGimbalRight = document.getElementById('canal-gimbal-right') as HTMLDivElement;
 let orientSubmenuOpen = false;
-let earViewMode: 'head' | 'lateral' = 'head';
-
-/** Updates the reintroduced orientation-reference gimbal's left/right labels for the
- * current Ear view mode -- see index.html's data-head/data-lateral attributes and
- * styles.css's .canal-gimbal doc comment for why this is a static reference label, not
- * a live-rotating 3D indicator. */
-function applyGimbalLabels(): void {
-  for (const gimbal of [canalGimbalLeft, canalGimbalRight]) {
-    for (const label of gimbal.querySelectorAll<HTMLElement>('.canal-gimbal-label[data-head]')) {
-      label.textContent = earViewMode === 'head' ? label.dataset.head! : label.dataset.lateral!;
-    }
-  }
-}
-applyGimbalLabels();
 
 canalOrientToggleBtn.addEventListener('click', (e) => {
   e.stopPropagation();
@@ -252,13 +248,12 @@ document.addEventListener('click', (e) => {
 });
 for (const btn of canalOrientSubmenu.querySelectorAll<HTMLButtonElement>('button[data-orient]')) {
   btn.addEventListener('click', () => {
-    earViewMode = btn.dataset.orient as 'head' | 'lateral';
-    canalSceneLeft.setOverviewMode(earViewMode);
-    canalSceneRight.setOverviewMode(earViewMode);
-    canalOrientToggleBtn.textContent = `Ear view: ${earViewMode === 'head' ? 'Head orientation' : 'Lateral view'}`;
+    const mode = btn.dataset.orient as 'head' | 'lateral';
+    canalSceneLeft.setOverviewMode(mode);
+    canalSceneRight.setOverviewMode(mode);
+    canalOrientToggleBtn.textContent = `Ear view: ${mode === 'head' ? 'Head orientation' : 'Lateral view'}`;
     for (const other of canalOrientSubmenu.querySelectorAll('button')) other.classList.remove('is-active');
     btn.classList.add('is-active');
-    applyGimbalLabels();
     orientSubmenuOpen = false;
     canalOrientSubmenu.hidden = true;
   });
@@ -301,7 +296,7 @@ canalAboutPill.addEventListener('click', () => {
     canalAboutPopover.style.right = `${window.innerWidth - rect.right}px`;
     if (!aboutQrRendered) {
       aboutQrRendered = true;
-      QRCode.toCanvas(aboutQrCanvas, 'https://jakalnz.github.io/bppv-simulator/', { width: 132, margin: 1 }).catch(
+      QRCode.toCanvas(aboutQrCanvas, 'https://jakalnz.github.io/vor-simulator/', { width: 132, margin: 1 }).catch(
         () => {
           aboutQrRendered = false;
         }

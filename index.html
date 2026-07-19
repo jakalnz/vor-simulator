@@ -18,7 +18,7 @@
         <a href="https://doi.org/10.1038/s41598-021-82716-0" target="_blank" rel="noopener">doi.org/10.1038/s41598-021-82716-0</a>
         <p>
           Developed by Michael Sanders:
-          <a href="https://github.com/jakalnz/bppv-simulator" target="_blank" rel="noopener">github.com/jakalnz/bppv-simulator</a>
+          <a href="https://github.com/jakalnz/vor-simulator" target="_blank" rel="noopener">github.com/jakalnz/vor-simulator</a>
         </p>
         <div class="about-qr">
           <canvas id="about-qr-canvas" width="132" height="132"></canvas>
@@ -44,7 +44,6 @@
             <span id="canal-panel-title">Semicircular canals</span>
             <button id="canal-view-toggle" class="about-pill" type="button" title="Switch between the 3D ear model and a neural firing-rate plot">Neural firing</button>
             <button id="canal-micro-toggle" class="about-pill" type="button" title="Zoom the camera in on the actively-stimulated ampulla to demonstrate fluid microdynamics">Micro fluid view</button>
-            <button id="canal-flow-shading-toggle" class="about-pill" type="button" title="Toggle the moving endolymph flow-band overlay on the duct/ampulla">Flow shading: Off</button>
             <button id="canal-orient-toggle" class="about-pill" type="button" title="Switch the ear model's default camera angle">Ear view: Head orientation</button>
             <button id="canal-about-pill" class="about-pill" type="button">About</button>
           </h2>
@@ -53,6 +52,7 @@
             <button type="button" class="about-pill" data-plane="horizontal">Horizontal</button>
             <button type="button" class="about-pill" data-plane="larp">LARP</button>
             <button type="button" class="about-pill" data-plane="ralp">RALP</button>
+            <button id="canal-flow-shading-toggle" class="about-pill canal-micro-submenu-right" type="button" title="Toggle the moving endolymph flow-band overlay on the duct/ampulla">Flow shading: Off</button>
           </div>
           <div class="canal-micro-submenu" id="canal-orient-submenu" hidden>
             <button type="button" class="about-pill is-active" data-orient="head">Head orientation</button>
@@ -63,23 +63,11 @@
               <span class="split-pane-label">Right ear</span>
               <canvas id="canal-canvas-right"></canvas>
               <div id="canal-cleared-toast-right" class="cleared-toast" hidden>👍 Cleared into the utricle</div>
-              <div class="canal-gimbal" id="canal-gimbal-right">
-                <span class="canal-gimbal-label canal-gimbal-top">S</span>
-                <span class="canal-gimbal-label canal-gimbal-bottom">I</span>
-                <span class="canal-gimbal-label canal-gimbal-left" data-head="Med" data-lateral="P">P</span>
-                <span class="canal-gimbal-label canal-gimbal-right" data-head="Lat" data-lateral="A">A</span>
-              </div>
             </div>
             <div class="split-pane">
               <span class="split-pane-label">Left ear</span>
               <canvas id="canal-canvas-left"></canvas>
               <div id="canal-cleared-toast-left" class="cleared-toast" hidden>👍 Cleared into the utricle</div>
-              <div class="canal-gimbal" id="canal-gimbal-left">
-                <span class="canal-gimbal-label canal-gimbal-top">S</span>
-                <span class="canal-gimbal-label canal-gimbal-bottom">I</span>
-                <span class="canal-gimbal-label canal-gimbal-left" data-head="Lat" data-lateral="A">A</span>
-                <span class="canal-gimbal-label canal-gimbal-right" data-head="Med" data-lateral="P">P</span>
-              </div>
             </div>
           </div>
           <div class="canvas-wrap" id="canal-hex-view" hidden>
