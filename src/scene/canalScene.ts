@@ -296,8 +296,13 @@ export class CanalScene {
             .replace(
               '#include <dithering_fragment>',
               `
-  float flowBand = smoothstep(0.55, 1.0, sin(vFlowCoord * 900.0 - uFlowPhase));
-  gl_FragColor.rgb += flowBand * 0.45;
+  // Narrow, dark bands (not the earlier wide bright ones, which read as a lens-flare
+  // wash and buried the underlying anatomy) -- higher frequency for more/thinner bands,
+  // a tight smoothstep window so each band stays a crisp line rather than a broad glow,
+  // and DARKENING (multiply down) instead of ADDING brightness so the duct's own
+  // excite/inhibit color and the mesh's shading underneath both stay legible.
+  float flowBand = smoothstep(0.94, 1.0, sin(vFlowCoord * 2400.0 - uFlowPhase));
+  gl_FragColor.rgb *= 1.0 - flowBand * 0.55;
   #include <dithering_fragment>`
             );
         };
