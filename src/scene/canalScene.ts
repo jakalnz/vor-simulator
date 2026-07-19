@@ -100,25 +100,64 @@ const CUPULA_TILT_CLAMP = 1.5;
 const FLUID_ARROW_COLOR = 0xff9500;
 const HEAD_ARROW_COLOR = 0x33ff66;
 /**
- * Shared visualization gain turning an arrow's driving value into a length (meters).
- * ONE shared scale (not a separate gain per arrow, which is what this file had before)
- * -- reported live that the head arrow read as consistently oversized next to the fluid
- * arrow. That wasn't just a scale mismatch: the fluid arrow's driver (cupula beta) is
- * tau-damped and stays roughly bounded, while the head arrow's driver (raw
- * instantaneous angular velocity, rad/s) is unbounded and commonly reaches a larger
- * peak magnitude for the same "brisk head turn" -- so ARROW_INPUT_CLAMP below clamps
- * BOTH drivers to the same domain before this same scale is applied, making the two
- * arrows' sizes genuinely comparable, not just nominally using the same constant.
+ * Shared visualization gain turning an arrow's driving value into a length, as a
+ * FRACTION of the camera's current distance-to-target (not a fixed meters constant) --
+ * a fixed-meters length went through two wrong tunings in a row (first way too long,
+ * spanning almost the whole frame at the wider zoom; then, overcorrected, so short it
+ * read as "barely visible") because the right absolute size depends on how far the
+ * camera currently is, which changes (MICRO_ZOOM_DISTANCE_FACTOR, or any future zoom
+ * retuning). Scaling by currentDistance instead makes the arrows self-correct: a
+ * max-magnitude arrow is always ARROW_LENGTH_FRACTION of the current view distance,
+ * clearly visible regardless of exactly how tight the zoom is.
+ *
+ * ONE shared scale (not a separate gain per arrow) -- reported live that the head
+ * arrow read as oversized next to the fluid arrow. That wasn't just a scale mismatch:
+ * the fluid arrow's driver (cupula beta) is tau-damped and stays roughly bounded,
+ * while the head arrow's driver (raw instantaneous angular velocity, rad/s) is
+ * unbounded and commonly reaches a larger peak magnitude for the same "brisk head
+ * turn" -- so ARROW_INPUT_CLAMP clamps BOTH drivers to the same domain before this
+ * same fraction is applied, making the two arrows' sizes genuinely comparable.
  */
-// Shrunk from 0.003/0.0035 -- at the wider Micro fluid view zoom (see
-// MICRO_ZOOM_DISTANCE_FACTOR), the old max length was comparable to the ENTIRE visible
-// frame, so a large fluid arrow stretched all the way from the ampulla out past the
-// duct's far edge instead of staying a compact indicator near the cupula it's
-// annotating (reported live: wanted the arrow's origin to stay in the foreground,
-// close to the ampulla, not spanning the whole canal).
-const ARROW_LENGTH_SCALE = 0.0006;
+const ARROW_LENGTH_FRACTION = 0.5;
 const ARROW_INPUT_CLAMP = 1.5;
-const MAX_ARROW_LENGTH = 0.0009;
+/**
+ * Exponential smoothing factor (per setFluidVisuals call, i.e. per rendered frame) for
+ * the head-rotation arrow's driving value. NOT literally instantaneous -- raw angular
+ * velocity sampled once a frame can spike for only 1-2 frames during real mouse-drag
+ * input (each frame's velocity is derived from the delta since the last orientation
+ * sample, which is noisy/bursty when the pointer isn't moving perfectly smoothly),
+ * making a truly instantaneous arrow flicker in and out too fast to see (reported
+ * live: "the green arrows do not appear at all"). A short smoothing window keeps it
+ * visible for a few frames around any real head motion while still reading as
+ * distinctly more responsive than the fluid arrow's much slower cupula-tau decay.
+ */
+const HEAD_ARROW_SMOOTHING = 0.35;
+
+/**
+ * A simple directional indicator: one cone, base at local origin, apex at local +Y --
+ * NOT a THREE.ArrowHelper (see fluidArrow/headArrow's own doc comment for why).
+ * Positioning + orienting one of these (see setOverlayArrow) just means: put its
+ * origin at the desired start point, quaternion.setFromUnitVectors(+Y, direction), and
+ * scale.y by the desired length (scale.x/z for width) -- the cone then visually spans
+ * from that origin to origin + direction*length.
+ */
+function makeIndicatorCone(color: number): THREE.Mesh {
+  const geometry = new THREE.ConeGeometry(0.4, 1, 10);
+  geometry.translate(0, 0.5, 0); // base at y=0, apex at y=1 (default is centered on y=0)
+  const material = new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    depthTest: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.renderOrder = 999;
+  mesh.frustumCulled = false;
+  mesh.visible = false;
+  return mesh;
+}
+
 /** Cupula-beta-to-scroll-phase gain for the duct/ampulla flow-band shader (see
  * makeCupulaMaterial's sibling flow-uniform wiring in loadRealAnatomy) -- a
  * visualization-only scroll speed, not a physical fluid velocity. */
@@ -246,8 +285,18 @@ export class CanalScene {
    * for teaching but not nice to look at all the time" and wanted a single on/off, not
    * a busier per-canal control -- see main.ts's flow-shading toggle. */
   private readonly flowIntensityUniform = { value: 0 };
-  private readonly fluidArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(), 0, FLUID_ARROW_COLOR);
-  private readonly headArrow = new THREE.ArrowHelper(new THREE.Vector3(0, 1, 0), new THREE.Vector3(), 0, HEAD_ARROW_COLOR);
+  // Simple custom cone meshes, NOT THREE.ArrowHelper -- ArrowHelper splits into two
+  // child objects (a Line "shaft" + a Mesh "head") that share geometry cached at the
+  // library level, and one of the two (the cone) was found live to silently submit its
+  // triangles to the GPU (confirmed via renderer.info.render.triangles) while producing
+  // ZERO visible pixels (confirmed via direct WebGL readPixels) -- extensive live
+  // debugging (matrix/material/geometry all checked valid) never isolated why, so
+  // rather than keep chasing an ArrowHelper-specific quirk, this sidesteps it with a
+  // single ordinary cone Mesh per arrow instead. See makeIndicatorCone.
+  private readonly fluidArrow = makeIndicatorCone(FLUID_ARROW_COLOR);
+  private readonly headArrow = makeIndicatorCone(HEAD_ARROW_COLOR);
+  /** Smoothed head-arrow driving value, per canal (see HEAD_ARROW_SMOOTHING). */
+  private readonly headArrowSmoothed: Partial<Record<CanalType, number>> = {};
 
   constructor(canvas: HTMLCanvasElement, private readonly side: EarSide) {
     this.renderer = createRenderer(canvas);
@@ -293,23 +342,11 @@ export class CanalScene {
     // above -- their positions/directions are set in labyrinthGroup-LOCAL (raw right-ear)
     // space below, and the parent's own static frame-conversion + left-ear mirror scale
     // carries them into the right place automatically, exactly like ductPositionAtFraction's
-    // clot marker. Hidden until setFluidVisuals turns them on for a focused canal.
-    this.fluidArrow.visible = false;
-    this.headArrow.visible = false;
-    // Render on top of everything regardless of depth -- both arrows are meant to be
-    // read as an annotation/overlay, not real geometry sitting inside the translucent
-    // duct/ampulla meshes. Without this, the translucent (depthWrite:false) duct
-    // blended OVER the arrows wherever the canal ring happened to pass through the same
-    // screen area, making the head-rotation arrow in particular all but invisible
-    // (reported live) since it's deliberately placed where the ring often overlaps it.
-    for (const arrow of [this.fluidArrow, this.headArrow]) {
-      arrow.renderOrder = 999;
-      arrow.traverse((child) => {
-        if (child instanceof THREE.Mesh || child instanceof THREE.Line) {
-          (child.material as THREE.Material).depthTest = false;
-        }
-      });
-    }
+    // clot marker. Already built hidden, depthTest-disabled, and high-renderOrder (see
+    // makeIndicatorCone) -- the depthTest/renderOrder combination is what lets them
+    // render on top of the translucent utricle/common-crus/saccule context meshes
+    // (which are never hidden by setFocusedCanal, so they'd otherwise blend back over
+    // an arrow positioned near them).
     this.labyrinthGroup.add(this.fluidArrow, this.headArrow);
 
     this.loadRealAnatomy();
@@ -697,6 +734,7 @@ export class CanalScene {
     if (!canal || !anchor) {
       this.fluidArrow.visible = false;
       this.headArrow.visible = false;
+      for (const c of Object.keys(this.headArrowSmoothed) as CanalType[]) this.headArrowSmoothed[c] = 0;
       return;
     }
 
@@ -739,26 +777,31 @@ export class CanalScene {
     // frame's vertical half-extent at this camera's 45deg FOV (tan(22.5deg) ~= 0.41),
     // staying just inside the visible bottom edge instead of at/past it.
     const headArrowPos = this.currentLookTarget.clone().addScaledVector(new THREE.Vector3(0, -1, 0), this.currentDistance * 0.32);
-    this.setOverlayArrow(this.headArrow, headArrowPos, tangentVec, -rotationalFlow);
+    // Smoothed (see HEAD_ARROW_SMOOTHING's doc comment), not the raw instantaneous
+    // -rotationalFlow directly -- otherwise a single noisy/bursty velocity sample can
+    // make the arrow flash for under a frame, too fast to actually see.
+    const prevSmoothed = this.headArrowSmoothed[canal] ?? 0;
+    const smoothedHeadValue = prevSmoothed + (-rotationalFlow - prevSmoothed) * HEAD_ARROW_SMOOTHING;
+    this.headArrowSmoothed[canal] = smoothedHeadValue;
+    this.setOverlayArrow(this.headArrow, headArrowPos, tangentVec, smoothedHeadValue);
   }
 
   /** Shared helper for the two overlay arrows in setFluidVisuals -- both point along the
-   * same duct-tangent axis and share one length scale (ARROW_INPUT_CLAMP keeps their
+   * same duct-tangent axis and share one length fraction (ARROW_INPUT_CLAMP keeps their
    * driving values on the same domain first, so the two end up genuinely comparable in
-   * size, not just nominally sharing a constant -- see ARROW_LENGTH_SCALE's doc
-   * comment), only their position and driving value differ. */
-  private setOverlayArrow(arrow: THREE.ArrowHelper, position: THREE.Vector3, tangentVec: THREE.Vector3, signedValue: number): void {
+   * size, not just nominally sharing a constant -- see ARROW_LENGTH_FRACTION's doc
+   * comment), only their position and driving value differ. Length is a FRACTION of
+   * the camera's current distance-to-target, not a fixed meters constant -- see that
+   * same doc comment for why. */
+  private setOverlayArrow(arrow: THREE.Mesh, position: THREE.Vector3, tangentVec: THREE.Vector3, signedValue: number): void {
     const clamped = THREE.MathUtils.clamp(signedValue, -ARROW_INPUT_CLAMP, ARROW_INPUT_CLAMP);
-    const length = Math.min(MAX_ARROW_LENGTH, Math.abs(clamped) * ARROW_LENGTH_SCALE);
-    arrow.visible = length > 1e-6;
+    const length = (Math.abs(clamped) / ARROW_INPUT_CLAMP) * this.currentDistance * ARROW_LENGTH_FRACTION;
+    arrow.visible = length > 1e-9;
     if (!arrow.visible) return;
     arrow.position.copy(position);
-    arrow.setDirection(tangentVec.clone().multiplyScalar(Math.sign(clamped) || 1).normalize());
-    // headLength/headWidth as a LARGE fraction of the total length (not the
-    // library-default ~0.2/0.2) -- at this scene's tiny (sub-millimeter) scale, a
-    // thin 1px line is barely distinguishable from the surrounding geometry (confirmed
-    // live), so most of the arrow's visible presence needs to come from the cone.
-    arrow.setLength(length, length * 0.6, length * 0.4);
+    const direction = tangentVec.clone().multiplyScalar(Math.sign(clamped) || 1).normalize();
+    arrow.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
+    arrow.scale.set(length * 0.5, length, length * 0.5);
   }
 
   /**
