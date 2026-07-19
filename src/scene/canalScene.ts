@@ -110,9 +110,15 @@ const HEAD_ARROW_COLOR = 0x33ff66;
  * BOTH drivers to the same domain before this same scale is applied, making the two
  * arrows' sizes genuinely comparable, not just nominally using the same constant.
  */
-const ARROW_LENGTH_SCALE = 0.003;
+// Shrunk from 0.003/0.0035 -- at the wider Micro fluid view zoom (see
+// MICRO_ZOOM_DISTANCE_FACTOR), the old max length was comparable to the ENTIRE visible
+// frame, so a large fluid arrow stretched all the way from the ampulla out past the
+// duct's far edge instead of staying a compact indicator near the cupula it's
+// annotating (reported live: wanted the arrow's origin to stay in the foreground,
+// close to the ampulla, not spanning the whole canal).
+const ARROW_LENGTH_SCALE = 0.0006;
 const ARROW_INPUT_CLAMP = 1.5;
-const MAX_ARROW_LENGTH = 0.0035;
+const MAX_ARROW_LENGTH = 0.0009;
 /** Cupula-beta-to-scroll-phase gain for the duct/ampulla flow-band shader (see
  * makeCupulaMaterial's sibling flow-uniform wiring in loadRealAnatomy) -- a
  * visualization-only scroll speed, not a physical fluid velocity. */
@@ -290,6 +296,20 @@ export class CanalScene {
     // clot marker. Hidden until setFluidVisuals turns them on for a focused canal.
     this.fluidArrow.visible = false;
     this.headArrow.visible = false;
+    // Render on top of everything regardless of depth -- both arrows are meant to be
+    // read as an annotation/overlay, not real geometry sitting inside the translucent
+    // duct/ampulla meshes. Without this, the translucent (depthWrite:false) duct
+    // blended OVER the arrows wherever the canal ring happened to pass through the same
+    // screen area, making the head-rotation arrow in particular all but invisible
+    // (reported live) since it's deliberately placed where the ring often overlaps it.
+    for (const arrow of [this.fluidArrow, this.headArrow]) {
+      arrow.renderOrder = 999;
+      arrow.traverse((child) => {
+        if (child instanceof THREE.Mesh || child instanceof THREE.Line) {
+          (child.material as THREE.Material).depthTest = false;
+        }
+      });
+    }
     this.labyrinthGroup.add(this.fluidArrow, this.headArrow);
 
     this.loadRealAnatomy();
@@ -705,6 +725,12 @@ export class CanalScene {
     // above. Deliberately the OPPOSITE sign from the fluid arrow's beta -- physically,
     // the wall moves opposite to the fluid's RELATIVE (ampullofugal-positive) lag
     // direction (see physics/canal.ts's AMPULLOFUGAL_SIGN doc comment).
+    // Anchored at currentLookTarget (the frame's own center, X/Z as well as Y), NOT the
+    // ampulla anchor -- using the ampulla anchor's X/Z here left the arrow offset toward
+    // whichever side that anchor happened to sit on within the frame, not centered in
+    // the empty space below the model (reported live). currentLookTarget IS the point
+    // the camera looks straight at, so offsetting only its Y is what actually centers
+    // the arrow horizontally in the visible frame.
     // 0.32 (not the whole currentDistance) -- currentDistance is the CAMERA's distance
     // along viewDir from the look target, not the frame's own vertical half-extent;
     // offsetting by the full distance shot the arrow well outside the visible frustum
@@ -712,7 +738,7 @@ export class CanalScene {
     // that distance, i.e. entirely off-screen). ~0.35x the distance approximates the
     // frame's vertical half-extent at this camera's 45deg FOV (tan(22.5deg) ~= 0.41),
     // staying just inside the visible bottom edge instead of at/past it.
-    const headArrowPos = anchor.clone().addScaledVector(new THREE.Vector3(0, -1, 0), this.currentDistance * 0.32);
+    const headArrowPos = this.currentLookTarget.clone().addScaledVector(new THREE.Vector3(0, -1, 0), this.currentDistance * 0.32);
     this.setOverlayArrow(this.headArrow, headArrowPos, tangentVec, -rotationalFlow);
   }
 
