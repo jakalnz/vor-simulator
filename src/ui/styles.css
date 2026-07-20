@@ -234,6 +234,99 @@ body {
   text-align: center;
 }
 
+/* Full-screen white paper modal, opened from the "Read the white paper" link inside
+ * .about-popover (see main.ts). Appended to #app directly rather than nested inside the
+ * popover so it isn't clipped/closed by the popover's own outside-click handler. */
+.whitepaper-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.whitepaper-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.whitepaper-panel {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  max-width: 720px;
+  width: 100%;
+  max-height: 85vh;
+  overflow: hidden;
+}
+
+.whitepaper-body {
+  overflow-y: auto;
+  max-height: 85vh;
+  padding: 28px 32px 36px;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.whitepaper-body h1 {
+  color: var(--text);
+  font-size: 1.3rem;
+  margin: 0 0 4px;
+}
+
+.whitepaper-subtitle {
+  color: var(--text-faint);
+  font-size: 0.78rem;
+  margin: 0 0 20px;
+}
+
+.whitepaper-body h2 {
+  color: var(--text);
+  font-size: 0.98rem;
+  margin: 22px 0 8px;
+}
+
+.whitepaper-body p,
+.whitepaper-body ul,
+.whitepaper-body ol {
+  margin: 0 0 10px;
+}
+
+.whitepaper-body ul,
+.whitepaper-body ol {
+  padding-left: 20px;
+}
+
+.whitepaper-body code {
+  background: var(--panel-header);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.8em;
+}
+
+.whitepaper-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.whitepaper-close:hover {
+  color: var(--text);
+}
+
 /* Popover content (mode picker, per-canal function toggles) -- appended to <body> for
  * the same overflow:hidden-escaping reason as .about-popover, positioned ABOVE its
  * trigger button (via JS-set bottom, not top) since the control bar sits at the page's

@@ -317,6 +317,26 @@ document.addEventListener('click', (e) => {
   }
 });
 
+// White paper modal -- opened from a link inside the about popover.
+const whitepaperOpen = document.getElementById('whitepaper-open') as HTMLButtonElement;
+const whitepaperModal = document.getElementById('whitepaper-modal') as HTMLDivElement;
+const whitepaperClose = document.getElementById('whitepaper-close') as HTMLButtonElement;
+whitepaperOpen.addEventListener('click', () => {
+  canalAboutPopover.hidden = true;
+  whitepaperModal.hidden = false;
+});
+whitepaperClose.addEventListener('click', () => {
+  whitepaperModal.hidden = true;
+});
+whitepaperModal.querySelector('.whitepaper-backdrop')!.addEventListener('click', () => {
+  whitepaperModal.hidden = true;
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !whitepaperModal.hidden) {
+    whitepaperModal.hidden = true;
+  }
+});
+
 const mouseDragSource = new MouseDragSource(headCanvas);
 const gyroSource = new DeviceOrientationSource();
 

@@ -24,6 +24,153 @@
           <canvas id="about-qr-canvas" width="132" height="132"></canvas>
           <span>Scan to open on your phone</span>
         </div>
+        <p>
+          <button id="whitepaper-open" class="about-pill" type="button">Read the white paper</button>
+        </p>
+      </div>
+      <div id="whitepaper-modal" class="whitepaper-modal" hidden>
+        <div class="whitepaper-backdrop"></div>
+        <div class="whitepaper-panel" role="dialog" aria-modal="true" aria-labelledby="whitepaper-title">
+          <button id="whitepaper-close" class="whitepaper-close" type="button" aria-label="Close">&times;</button>
+          <div class="whitepaper-body">
+            <h1 id="whitepaper-title">The VOR Simulator: How It Works</h1>
+            <p class="whitepaper-subtitle">A white paper on the physiology model and 3D visualisation behind this app</p>
+
+            <h2>1. What this app simulates</h2>
+            <p>
+              The Vestibulo-Ocular Reflex (VOR) is the reflex that keeps your gaze fixed on a target while your
+              head moves &mdash; it's why you can read a street sign while walking, or keep eye contact while
+              shaking your head "no". This simulator drives a real-time, physiologically grounded model of that
+              reflex from live device rotation (phone/tablet gyroscope) or mouse-drag input, and renders the
+              downstream effects: fluid movement in the inner ear's semicircular canals, changes in vestibular
+              nerve firing rate, and the resulting eye movement (nystagmus).
+            </p>
+
+            <h2>2. The pipeline, end to end</h2>
+            <p>Every animation frame runs the same five-stage pipeline:</p>
+            <ol>
+              <li><strong>Head angular velocity</strong> is read from the device gyroscope (or synthesised from
+                mouse-drag velocity, or played back from a scripted maneuver such as Dix-Hallpike or the Epley
+                repositioning sequence).</li>
+              <li><strong>Vector projection</strong> resolves that 3D angular velocity onto each of the six
+                semicircular canals' individual sensing axes.</li>
+              <li><strong>Cupular fluid dynamics</strong> convert each canal's projected velocity into a
+                deflection signal using a damped-pendulum model.</li>
+              <li><strong>Neural firing</strong> converts cupular deflection into a vestibular nerve firing rate
+                for each canal, obeying Ewald's Laws.</li>
+              <li><strong>Eye mechanics</strong> compute the slow-phase drift and fast-phase saccades
+                (nystagmus) that the brainstem would command from the difference in firing rate between paired
+                canals.</li>
+            </ol>
+
+            <h2>3. Vector projection: six canals, three planes</h2>
+            <p>
+              The six semicircular canals aren't aligned with simple up/down/left/right axes &mdash; each is
+              tilted, and they work as three functional pairs:
+            </p>
+            <ul>
+              <li><strong>Horizontal pair</strong> (left/right horizontal canals) &mdash; primarily sense yaw
+                (turning your head side to side).</li>
+              <li><strong>LARP pair</strong> (left anterior + right posterior) &mdash; a diagonal plane.</li>
+              <li><strong>RALP pair</strong> (right anterior + left posterior) &mdash; the mirror diagonal
+                plane.</li>
+            </ul>
+            <p>
+              Each canal is represented by a unit vector <em>n&#770;</em> pointing along its sensing axis. The
+              stimulation a canal receives is the dot product of the head's angular velocity vector
+              <em>&omega;</em> with that canal's axis: &omega;<sub>canal</sub> = &omega; &middot; n&#770;<sub>canal</sub>.
+              This is why tilting your head changes which canals respond to a given rotation &mdash; you're
+              changing the alignment between the rotation axis and each canal's fixed sensing direction.
+            </p>
+
+            <h2>4. Cupula fluid dynamics: a damped pendulum, not a bucket of water</h2>
+            <p>
+              Each canal is a fluid-filled ring with a gelatinous membrane (the cupula) that bows in response to
+              fluid inertia. Physiologically this behaves like a heavily overdamped torsion pendulum (the
+              Steinhausen model): it responds promptly to acceleration, then relaxes back toward zero even during
+              sustained constant-velocity rotation, with a biological time constant around 6 seconds. The app
+              models this as a discrete high-pass filter run every frame &mdash; cupular deflection decays a
+              little each tick while being driven by the canal's current angular velocity. This decay is the
+              reason a prolonged constant-speed spin eventually stops producing a sensation of turning, and why
+              stopping abruptly produces a strong after-sensation in the opposite direction.
+            </p>
+
+            <h2>5. Neural firing and Ewald's Laws</h2>
+            <p>
+              Each vestibular nerve has a resting discharge rate of roughly 90 spikes/second even with no head
+              movement at all &mdash; this baseline is what makes the reflex directionally sensitive, since a
+              rate can go up <em>or</em> down from rest. Cupular deflection pushes the firing rate up or down
+              from that baseline:
+            </p>
+            <ul>
+              <li><strong>Horizontal canals:</strong> fluid movement toward the ampulla (ampullopetal) excites;
+                movement away from it (ampullofugal) inhibits.</li>
+              <li><strong>Vertical canals (anterior/posterior):</strong> the rule flips &mdash; ampullofugal flow
+                excites, ampullopetal flow inhibits.</li>
+              <li><strong>Ewald's Second Law:</strong> firing rate can rise well above baseline (modelled up to
+                roughly 400 Hz) but can never fall below 0 Hz. This floor is the physiological root of many
+                clinical asymmetries: a canal being maximally inhibited saturates at zero, while its excited
+                partner keeps climbing, so a given real rotation does not produce symmetric left/right neural
+                signals.</li>
+            </ul>
+            <p>
+              The canal panel's colour coding shows this directly &mdash; canals shift toward red as firing rises
+              above baseline (excitation) and toward blue as it falls below baseline (inhibition), with neutral
+              grey at rest.
+            </p>
+
+            <h2>6. From firing-rate asymmetry to eye movement (nystagmus)</h2>
+            <p>
+              The brainstem doesn't read absolute firing rates &mdash; it reads the <em>difference</em> between a
+              canal pair's left and right members (e.g. &Delta;f = f<sub>LH</sub> &minus; f<sub>RH</sub> for the
+              horizontal pair). That difference drives a smooth, involuntary slow-phase eye drift in the
+              direction opposite the head's rotation, at a velocity (SPV) proportional to &Delta;f &mdash; this is
+              the reflex actually doing its job of holding gaze steady on the world while the head moves under it.
+            </p>
+            <p>
+              Because the eye can't drift indefinitely in one direction, once the accumulated slow-phase
+              displacement crosses a mechanical threshold (about 15&deg;), the eye snaps back rapidly in a
+              fast-phase saccade before resuming slow-phase tracking. This slow-drift/fast-reset sawtooth is
+              nystagmus, and it's what the simulator renders in the eye panels &mdash; by convention, the fast
+              phase's direction is used clinically to name the nystagmus.
+            </p>
+
+            <h2>7. Live input: how head motion gets into the model</h2>
+            <p>
+              On a phone or tablet, the app requests access to the device's rotation-rate sensor
+              (<code>DeviceMotionEvent</code>) and reads angular velocity directly in degrees/second, converting
+              to radians for the physics. On desktop, mouse-drag gestures are converted into an equivalent
+              synthetic angular velocity so the same downstream pipeline runs unmodified. A library of scripted
+              diagnostic and repositioning maneuvers (Dix-Hallpike, Epley, Semont, BBQ-roll, Zuma, roll-test) can
+              also drive head orientation directly, useful for demonstrating canalithiasis (BPPV) scenarios where
+              free-floating otoconia debris in a canal generates its own transient stimulation independent of
+              real head motion.
+            </p>
+
+            <h2>8. The 3D visualisation</h2>
+            <p>
+              The inner-ear geometry (semicircular canals, ampullae, utricle) is not a stylised cartoon &mdash;
+              it's built from real anatomical geometry sourced from the IE-Map in-vivo inner-ear atlas (Ahmadi et
+              al., 2021, <em>Scientific Reports</em>). Individual canal and ampulla meshes are identified during
+              asset load and their materials are recoloured every frame from the neural firing engine's output,
+              so the 3D model becomes a live readout of which canals are excited or inhibited for the current
+              head motion. A separate "micro fluid view" zooms the camera onto an individual ampulla to
+              demonstrate cupular deflection and endolymph flow directly, and a neural firing-rate plot mode
+              shows the same signals numerically alongside the 3D view.
+            </p>
+
+            <h2>9. Why this matters clinically</h2>
+            <p>
+              This model is the same reasoning clinicians use at the bedside: a rotation is decomposed onto the
+              six canal axes, cupular dynamics determine how briskly each canal responds, firing-rate asymmetry
+              (bounded below by zero per Ewald's Second Law) explains why some maneuvers produce strong nystagmus
+              and others don't, and the resulting slow/fast-phase eye movement pattern is exactly what's observed
+              during Dix-Hallpike testing, caloric testing, and head-impulse testing. The simulator exists to make
+              that normally invisible chain &mdash; from a millisecond of angular velocity to a visible beat of
+              nystagmus &mdash; something you can see happen in real time.
+            </p>
+          </div>
+        </div>
       </div>
       <div id="views">
         <div class="view-panel view-panel--eye">
