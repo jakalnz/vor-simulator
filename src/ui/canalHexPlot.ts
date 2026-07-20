@@ -9,7 +9,7 @@ import { FIRING_BASELINE_HZ } from '../physics/params';
  * spokes are allowed to extend well past that ring for a stronger stimulus (see
  * MAX_RADIUS_SCALE), unlike a hard-clamped gauge.
  */
-const OUTER_RING_SPAN_HZ = 60;
+export const OUTER_RING_SPAN_HZ = 60;
 /** Cap on how far a data spoke can be drawn, as a multiple of the outer ring's own
  * radius -- keeps an extreme excitation (approaching FIRING_CEILING_HZ) on-canvas. */
 const MAX_RADIUS_SCALE = 1.6;
@@ -76,10 +76,10 @@ function colorForHz(hz: number): string {
  * vectors represent a different kind of quantity (a COMBINED signal, not one canal's own
  * activity).
  */
-const COLOR_ACCENT_DARK = '#d9a441';
-const COLOR_ACCENT_LIGHT = '#b8791f';
+export const COLOR_ACCENT_DARK = '#d9a441';
+export const COLOR_ACCENT_LIGHT = '#b8791f';
 
-interface PairAxis {
+export interface PairAxis {
   label: string;
   vertexA: HexVertex;
   vertexB: HexVertex;
@@ -95,7 +95,7 @@ interface PairAxis {
  * rather than a second hand-written angle table, so this can never drift out of sync with
  * the spoke layout above.
  */
-const PAIR_AXES: PairAxis[] = [
+export const PAIR_AXES: PairAxis[] = [
   { label: 'Horiz', vertexA: VERTICES[0], vertexB: VERTICES[3] }, // LL / RL
   { label: 'LARP', vertexA: VERTICES[1], vertexB: VERTICES[4] }, // LA / RP
   { label: 'RALP', vertexA: VERTICES[2], vertexB: VERTICES[5] }, // RA / LP

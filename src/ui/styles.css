@@ -403,6 +403,31 @@ body {
   display: block;
 }
 
+/* Hex firing-rate panel stacks the 6-canal hex plot above the 3 paired-difference bar
+ * meters (see ui/canalDiffMeters.ts) -- a column split, hex plot getting the bulk of the
+ * height since it's the primary readout, meters a fixed short strip below it. */
+.canal-hex-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.canal-hex-wrap canvas {
+  width: 100%;
+  display: block;
+  min-height: 0;
+}
+
+#canal-hex-canvas {
+  flex: 1 1 auto;
+  height: 100%;
+}
+
+#canal-diff-meters-canvas {
+  flex: 0 0 84px;
+  height: 84px;
+}
+
 .split-pane-label {
   position: absolute;
   top: 4px;

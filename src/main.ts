@@ -30,6 +30,7 @@ import { bbqRollRight, bbqRollLeft } from './maneuvers/bbqRoll';
 import { zumaRight, zumaLeft } from './maneuvers/zuma';
 import { VngTrace } from './ui/vngTrace';
 import { CanalHexPlot } from './ui/canalHexPlot';
+import { CanalDiffMeters } from './ui/canalDiffMeters';
 import { keepScreenAwake } from './ui/wakeLock';
 import { initTheme, toggleTheme } from './ui/theme';
 
@@ -41,6 +42,7 @@ const eyeCanvasRight = document.getElementById('eye-canvas-right') as HTMLCanvas
 const canalCanvasLeft = document.getElementById('canal-canvas-left') as HTMLCanvasElement;
 const canalCanvasRight = document.getElementById('canal-canvas-right') as HTMLCanvasElement;
 const canalHexCanvas = document.getElementById('canal-hex-canvas') as HTMLCanvasElement;
+const canalDiffMetersCanvas = document.getElementById('canal-diff-meters-canvas') as HTMLCanvasElement;
 const headCanvas = document.getElementById('head-canvas') as HTMLCanvasElement;
 const vngCanvas = document.getElementById('vng-canvas') as HTMLCanvasElement;
 const controlsContainer = document.getElementById('controls') as HTMLDivElement;
@@ -110,6 +112,7 @@ const canalSceneRight = new CanalScene(canalCanvasRight, 'right');
 const headScene = new HeadScene(headCanvas);
 const vngTrace = new VngTrace(vngCanvas);
 const canalHexPlot = new CanalHexPlot(canalHexCanvas);
+const canalDiffMeters = new CanalDiffMeters(canalDiffMetersCanvas);
 
 // Canal panel view toggle: 3D dual-ear model (default) vs. a hexagonal neural
 // firing-rate plot showing all 6 canals at once (see ui/canalHexPlot.ts). Panel-local
@@ -640,6 +643,8 @@ function renderFrame(): void {
   } else {
     canalHexPlot.setFiringRates(lastFiringRates);
     canalHexPlot.render();
+    canalDiffMeters.setFiringRates(lastFiringRates);
+    canalDiffMeters.render();
   }
   headScene.render();
   vngTrace.render(simulationTimeSeconds);
