@@ -222,7 +222,6 @@ const GIZMO_COLOR_AP = 0xd9756a;
 const GIZMO_COLOR_SI = 0x6aa8d9;
 const GIZMO_COLOR_LATMED = 0x6ad98a;
 
-const COLOR_REST = new THREE.Color(0x9aa3ab);
 /**
  * Firing-rate delta (Hz, from baseline) at which the excite/inhibit color reaches FULL
  * saturation. Deliberately much smaller than the physiological ceiling/floor's full range
@@ -683,13 +682,15 @@ export class CanalScene {
         depthWrite: false,
       });
     }
-    const CONNECTOR_GLASS = glassMaterial(0xb87fa0, 0.18);
-    // Common crus is anatomically just the shared trunk where the canal ducts join --
-    // tinted the same as the ducts' resting color (COLOR_REST) and given the same emissive
-    // canalColorMaterial (not the plain, non-emissive glassMaterial) so it reads at the
-    // same brightness as the duct meshes it's continuous with, rather than looking dark by
+    // Common crus is anatomically just the shared trunk where the anterior and posterior
+    // ducts join -- tinted as a blend of CANAL_TINT.anterior/posterior (the two ducts it's
+    // actually continuous with) rather than the neutral grey COLOR_REST, which read as an
+    // odd whitish/colorless segment sitting between two visibly-tinted ducts. Given the
+    // same emissive canalColorMaterial (not the plain, non-emissive glassMaterial) so it
+    // reads at the same brightness as the duct meshes, rather than looking dark by
     // comparison under ambient-only lighting.
-    const COMMON_CRUS_GLASS = canalColorMaterial(COLOR_REST.getHex(), 0.28);
+    const COMMON_CRUS_COLOR = new THREE.Color(CANAL_TINT.anterior).lerp(new THREE.Color(CANAL_TINT.posterior), 0.5);
+    const COMMON_CRUS_GLASS = canalColorMaterial(COMMON_CRUS_COLOR.getHex(), 0.28);
     // Utricle/saccule tinted to match the otoconia clot (CLOT_COLOR) -- these are the
     // otolith organs where the clot's otoconia debris actually originates.
     const UTRICLE_GLASS = glassMaterial(CLOT_COLOR, 0.16);
@@ -765,7 +766,12 @@ export class CanalScene {
       await loadInto(anatomy.ductMesh, this.ductMaterials[canal], canalGroup);
       await loadCupulaWall(canal, anatomy, canalGroup);
       await loadInto(anatomy.ampullaBulgeMesh, this.ductMaterials[canal], canalGroup);
-      await loadInto(anatomy.connectorMesh, CONNECTOR_GLASS, canalGroup);
+      // Connector is anatomically just the duct continuing on toward the utricle -- tinted
+      // with the SAME material instance as this canal's own duct (like ampullaBulgeMesh
+      // above), not the old fixed CONNECTOR_GLASS mauve, which read as an unrelated,
+      // mismatched color at the exact point a student's eye is tracking a duct's own
+      // identity color toward the crus/utricle junction.
+      await loadInto(anatomy.connectorMesh, this.ductMaterials[canal], canalGroup);
       if (anatomy.canalUtricleWallMesh) await loadInto(anatomy.canalUtricleWallMesh, COMMON_CRUS_GLASS, canalGroup);
     }
     await loadInto(EAR_ANATOMY.commonCrusMesh, COMMON_CRUS_GLASS);
