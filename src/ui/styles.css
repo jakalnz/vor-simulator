@@ -359,13 +359,13 @@ body {
 }
 
 /*
- * Desktop layout: Eye is the primary diagnostic view, given the most space; Canal and
- * Head are secondary reference views, stacked in a narrower side column (canal over
- * head) rather than three equal-width columns -- the eye is what you actually read
- * nystagmus off, the other two are context. Within that side column, Canal gets more
- * of the shared height than Head (1.6fr vs 1fr) -- the otoconia clot/cupula/duct detail
- * needs more room to stay legible than the head orientation indicator does, which is
- * only ever a coarse "which way is it tilted" glance.
+ * Desktop layout: Canal is the primary view, given the most space -- the otoconia
+ * clot/cupula/duct detail is fine-grained and gets illegible on smaller desktop/tablet
+ * screens if squeezed into a secondary cell. Eye and Head are secondary reference views,
+ * stacked in a narrower side column (eye over head) rather than three equal-width
+ * columns -- the eye model is comparatively low-detail and reads fine at a smaller size.
+ * Within that side column, Eye gets more of the shared height than Head (1.6fr vs 1fr)
+ * since it's still the primary nystagmus readout, just given less room than canal.
  */
 #views {
   flex: 1 1 auto;
@@ -373,8 +373,8 @@ body {
   grid-template-columns: 1.7fr 1.3fr;
   grid-template-rows: 1.6fr 1fr;
   grid-template-areas:
-    'eye canal'
-    'eye head';
+    'canal eye'
+    'canal head';
   gap: 8px;
   min-height: 0;
 }
