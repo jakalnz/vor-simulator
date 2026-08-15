@@ -136,12 +136,35 @@ export const CUPULOLITH_FLOW_GAIN = 1.5;
  */
 export const JOLT_SPEED_THRESHOLD_RAD_S = 1.2;
 
-/** Consecutive physics ticks (at FIXED_DT, see main.ts) that |omegaBody| must stay above
- * JOLT_SPEED_THRESHOLD_RAD_S before a cupulolithiasis lesion detaches -- requiring a short
- * sustained run (rather than a single tick) rejects one-off sensor/timestamp noise (see
- * JOLT_MIN_VELOCITY_DT_S) while still resolving well within a maneuver's brisk swing,
- * which lasts on the order of a second. At 120Hz, 12 ticks is ~0.1s. */
-export const JOLT_SUSTAIN_TICKS = 12;
+/**
+ * Accumulated real seconds (NOT physics ticks) that |omegaBody| must have stayed above
+ * JOLT_SPEED_THRESHOLD_RAD_S -- via cupulolith.ts's leaky-bucket jitterSeconds
+ * accumulator -- before a cupulolithiasis lesion detaches. Deliberately NOT a consecutive-
+ * tick count: real device `deviceorientation` events arrive well below the 120Hz physics
+ * tick rate (see main.ts's stepPhysicsOnce), so between samples the orientation (and
+ * hence omegaBody) is momentarily flat/zero even during a genuinely fast, sustained real
+ * swing -- a consecutive-tick counter resets to 0 on every one of those in-between ticks
+ * and can then NEVER reach a multi-tick streak, confirmed empirically (a full 180deg/s,
+ * 1-second swing sampled at a realistic ~20Hz gyro rate produced a maximum consecutive
+ * streak of exactly 1 tick, regardless of how long the swing was sustained -- this was
+ * the reported live bug: cupulolithiasis wouldn't detach in gyro mode, or even reliably
+ * in scripted maneuver mode). The leaky-bucket accumulator instead ADDS each sample's own
+ * real-time span (velocityDt) while above threshold and DECAYS (rather than hard-resets)
+ * otherwise, so several genuine high-speed samples spread across sparse polling still sum
+ * to a real sustained duration. 0.15s is comfortably inside a single brisk maneuver swing
+ * (~1s) or handshake gesture, while being long enough that isolated single-sample spikes
+ * (even after JOLT_MIN_VELOCITY_DT_S's floor) can't trigger it alone.
+ */
+export const JOLT_SUSTAIN_SECONDS = 0.15;
+
+/** Exponential decay time constant (seconds) for cupulolith.ts's jitterSeconds
+ * leaky-bucket accumulator during ticks where |omegaBody| is below
+ * JOLT_SPEED_THRESHOLD_RAD_S -- long enough that the gaps between real gyro samples
+ * (tens of ms, see JOLT_SUSTAIN_SECONDS's doc comment) don't erase progress from a
+ * genuinely sustained swing, short enough that idly holding the head still for longer
+ * than that eventually lets any transient spike decay away rather than accumulating
+ * indefinitely. */
+export const JOLT_LEAK_TAU_S = 0.4;
 
 /**
  * Floor (seconds) on a physics tick's velocityDt (see main.ts's stepPhysicsOnce) below

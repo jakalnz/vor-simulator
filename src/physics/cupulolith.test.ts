@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { v3, normalize } from './types';
+import { v3, normalize, angularVelocityBody, rotateVec, quatInvert, quatFromAxisAngle, DEG2RAD } from './types';
 import { stepCanalith, initialCanalithState, ductTangent } from './canalith';
 import { initialCupulolithState, stepCupulolith } from './cupulolith';
 import { ALL_EAR_SIDES } from './canal';
+import { G_WORLD } from './params';
 
 const DT = 1 / 120;
 
@@ -70,5 +71,45 @@ describe('stepCupulolith detachment', () => {
       state = stepCupulolith(state, 'posterior', 'right', tangentAtCupula, 5.0, 0.0001).state;
     }
     expect(state.attached).toBe(true);
+  });
+
+  it('detaches from a genuine sustained swing even when sampled sparsely (real gyro poll rate), which a consecutive-tick counter could not', () => {
+    // Regression test for a reported live bug: a brisk ~180deg/s, 1-second swing produced
+    // no detachment in gyro mode. Root cause -- physics ticks at 120Hz, but real
+    // deviceorientation events (and this simulation) arrive far less often; between
+    // samples the orientation (and thus |omegaBody|) reads ~0, so a model requiring N
+    // CONSECUTIVE high-speed ticks could never accumulate a streak longer than 1, no
+    // matter how long the real swing lasted. The leaky-bucket jitterSeconds accumulator
+    // must still cross JOLT_SUSTAIN_SECONDS here.
+    const GYRO_SAMPLE_INTERVAL_S = 0.05; // ~20Hz, a realistic deviceorientation poll rate
+    const SWING_DURATION_S = 1.0;
+    const SWING_TOTAL_DEG = 180;
+    const PHYSICS_DT = 1 / 120;
+
+    let state = initialCupulolithState();
+    let prevQHeadForVelocity = quatFromAxisAngle(v3(1, 0, 0), 0);
+    let prevSampleTimeS = 0;
+    let currentSampleQ = prevQHeadForVelocity;
+    let nextSampleAtS = GYRO_SAMPLE_INTERVAL_S;
+
+    const totalTicks = Math.ceil(SWING_DURATION_S / PHYSICS_DT);
+    for (let i = 0; i < totalTicks && state.attached; i++) {
+      const tS = (i + 1) * PHYSICS_DT;
+      let velocityDt = PHYSICS_DT;
+      if (tS >= nextSampleAtS) {
+        const angleDeg = (tS / SWING_DURATION_S) * SWING_TOTAL_DEG;
+        currentSampleQ = quatFromAxisAngle(v3(1, 0, 0), angleDeg * DEG2RAD);
+        velocityDt = tS - prevSampleTimeS;
+        prevSampleTimeS = tS;
+        nextSampleAtS += GYRO_SAMPLE_INTERVAL_S;
+      }
+      const omega = angularVelocityBody(prevQHeadForVelocity, currentSampleQ, velocityDt);
+      prevQHeadForVelocity = currentSampleQ;
+      const speed = Math.hypot(omega[0], omega[1], omega[2]);
+      const gHead = rotateVec(quatInvert(currentSampleQ), v3(...G_WORLD));
+      state = stepCupulolith(state, 'posterior', 'right', gHead, speed, velocityDt).state;
+    }
+
+    expect(state.attached).toBe(false);
   });
 });

@@ -1,7 +1,13 @@
 import { Vec3, dot } from './types';
 import { CanalType, EarSide } from './canal';
 import { ductTangent } from './canalith';
-import { CUPULOLITH_FLOW_GAIN, JOLT_SPEED_THRESHOLD_RAD_S, JOLT_SUSTAIN_TICKS, JOLT_MIN_VELOCITY_DT_S } from './params';
+import {
+  CUPULOLITH_FLOW_GAIN,
+  JOLT_SPEED_THRESHOLD_RAD_S,
+  JOLT_SUSTAIN_SECONDS,
+  JOLT_LEAK_TAU_S,
+  JOLT_MIN_VELOCITY_DT_S,
+} from './params';
 
 /**
  * Cupulolithiasis (otoconia debris adherent directly to the cupula, rather than
@@ -16,21 +22,31 @@ import { CUPULOLITH_FLOW_GAIN, JOLT_SPEED_THRESHOLD_RAD_S, JOLT_SUSTAIN_TICKS, J
  * instead of supine/positional -- the opposite of the clinical picture (persistent
  * POSITIONAL nystagmus, provoked by e.g. the supine roll test, not by standing still).
  *
- * `jitterTicks` counts consecutive physics ticks where |omegaBody| has stayed above
+ * `jitterSeconds` is a leaky-bucket accumulator of real time spent with |omegaBody| above
  * JOLT_SPEED_THRESHOLD_RAD_S -- a sustained-angular-speed proxy for a genuine liberatory
  * "jolt" (a raw frame-to-frame acceleration spike can't be used here: ManeuverPlayer
  * slerps linearly between waypoints, so angular velocity is piecewise-constant per
  * segment and acceleration spikes at every waypoint boundary regardless of how brisk
- * that segment actually is -- see maneuvers/playback.ts).
+ * that segment actually is -- see maneuvers/playback.ts). Deliberately a LEAKY
+ * ACCUMULATOR, not a consecutive-tick counter: real device `deviceorientation` events
+ * arrive well below the 120Hz physics tick rate, so between samples the orientation (and
+ * thus |omegaBody|) reads near-zero even mid-swing -- a consecutive-tick counter resets
+ * to 0 on every one of those in-between ticks and can then never accumulate a multi-tick
+ * streak no matter how long a genuine swing is sustained (confirmed empirically: this was
+ * the reported live bug, cupulolithiasis not detaching in gyro mode). Summing each
+ * above-threshold sample's own real time span and decaying (not hard-resetting) below
+ * threshold lets several genuine samples spread across sparse polling still add up to a
+ * real sustained duration -- see params.ts's JOLT_SUSTAIN_SECONDS/JOLT_LEAK_TAU_S.
  */
 export interface CupulolithState {
   attached: boolean;
-  /** Consecutive physics ticks |omegaBody| has stayed above JOLT_SPEED_THRESHOLD_RAD_S. */
-  jitterTicks: number;
+  /** Leaky-bucket accumulated real seconds |omegaBody| has spent above
+   * JOLT_SPEED_THRESHOLD_RAD_S -- see this interface's own doc comment. */
+  jitterSeconds: number;
 }
 
 export function initialCupulolithState(): CupulolithState {
-  return { attached: true, jitterTicks: 0 };
+  return { attached: true, jitterSeconds: 0 };
 }
 
 export interface CupulolithStepResult {
@@ -47,8 +63,9 @@ export interface CupulolithStepResult {
  * main.ts's stepPhysicsOnce) -- ticks whose velocityDt falls below
  * JOLT_MIN_VELOCITY_DT_S are treated as unreliable timestamp samples (real device
  * gyro jitter/quantization can otherwise masquerade as a huge instantaneous angular
- * speed) and don't advance jitterTicks, though they also don't reset it -- a single
- * noisy sample shouldn't cancel an otherwise-genuine sustained swing either.
+ * speed) and are skipped entirely (neither adding to nor decaying jitterSeconds) --
+ * a single noisy sample shouldn't fabricate OR cancel an otherwise-genuine sustained
+ * swing.
  */
 export function stepCupulolith(
   state: CupulolithState,
@@ -60,9 +77,12 @@ export function stepCupulolith(
 ): CupulolithStepResult {
   if (!state.attached) return { state, flow: 0 };
 
-  let jitterTicks = state.jitterTicks;
+  let jitterSeconds = state.jitterSeconds;
   if (velocityDt >= JOLT_MIN_VELOCITY_DT_S) {
-    jitterTicks = omegaSpeed > JOLT_SPEED_THRESHOLD_RAD_S ? jitterTicks + 1 : 0;
+    jitterSeconds =
+      omegaSpeed > JOLT_SPEED_THRESHOLD_RAD_S
+        ? jitterSeconds + velocityDt
+        : jitterSeconds * Math.exp(-velocityDt / JOLT_LEAK_TAU_S);
   }
 
   const tangent = ductTangent(canal, side, 0);
@@ -73,11 +93,11 @@ export function stepCupulolith(
   // pulling it ampullofugally (gravityAlignment > 0) -- the same direction that would
   // carry free debris toward the utricle in the canalithiasis model. A jolt held in the
   // opposite orientation just agitates a mass gravity is pressing back onto the cupula.
-  const detach = jitterTicks >= JOLT_SUSTAIN_TICKS && gravityAlignment > 0;
+  const detach = jitterSeconds >= JOLT_SUSTAIN_SECONDS && gravityAlignment > 0;
   if (detach) {
-    return { state: { attached: false, jitterTicks: 0 }, flow: 0 };
+    return { state: { attached: false, jitterSeconds: 0 }, flow: 0 };
   }
 
   const flow = CUPULOLITH_FLOW_GAIN * gravityAlignment;
-  return { state: { attached: true, jitterTicks }, flow };
+  return { state: { attached: true, jitterSeconds }, flow };
 }
