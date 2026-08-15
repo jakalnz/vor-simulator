@@ -81,6 +81,13 @@ function makeToast(elementId: string) {
 }
 const clearedToastLeft = makeToast('canal-cleared-toast-left');
 const clearedToastRight = makeToast('canal-cleared-toast-right');
+/** Fires once when a cupulolithiasis lesion detaches from the cupula (see
+ * stepPhysicsOnce's cupulolithDetached handling) -- distinct from clearedToast*, which
+ * fires once the now-mobile debris subsequently clears into the utricle, since those are
+ * two separate clinical events for cupulolithiasis (contrast canalithiasis, which only
+ * has the one). */
+const detachedToastLeft = makeToast('canal-detached-toast-left');
+const detachedToastRight = makeToast('canal-detached-toast-right');
 
 // Fullscreen (Fullscreen API): on mobile, this hides the browser's own address bar/nav
 // chrome, handing that vertical space to the viewport. Hidden entirely where unsupported
@@ -460,8 +467,11 @@ controls = new Controls(
       bppvSelection = selection;
       canalithState = initialCanalithState();
       cupulolithState = initialCupulolithState();
+      cupulolithDetached = false;
       clearedToastLeft.hideImmediately();
       clearedToastRight.hideImmediately();
+      detachedToastLeft.hideImmediately();
+      detachedToastRight.hideImmediately();
       wasClearedIntoUtricle = false;
       controls.setManeuverCanal(selection?.canal ?? 'posterior');
       applyManeuver();
@@ -489,6 +499,10 @@ if (IS_MOBILE_SCREEN) enableGyro();
 let vorState: VorEngineState = initialVorEngineState();
 let canalithState: CanalithState = initialCanalithState();
 let cupulolithState: CupulolithState = initialCupulolithState();
+/** Once a cupulolithiasis lesion detaches from the cupula, it becomes free-floating
+ * debris and behaves exactly like canalithiasis from then on (see stepPhysicsOnce) --
+ * this flag marks that conversion, sticky until the next onBppvSelectionChange/reset. */
+let cupulolithDetached = false;
 let lastDebrisArcFraction = 0;
 /** Tracks the previous tick's cleared-into-utricle state so the toast fires once on the
  * rising edge (debris just settled in the utricle), not every tick while it stays there. */
@@ -507,9 +521,12 @@ function resetPhysics(): void {
   vorState = initialVorEngineState();
   canalithState = initialCanalithState();
   cupulolithState = initialCupulolithState();
+  cupulolithDetached = false;
   wasClearedIntoUtricle = false;
   clearedToastLeft.hideImmediately();
   clearedToastRight.hideImmediately();
+  detachedToastLeft.hideImmediately();
+  detachedToastRight.hideImmediately();
   maneuverPlayer.reset();
   maneuverPlayer.pause();
   controls.setPlayingLabel(false);
@@ -561,7 +578,14 @@ function stepPhysicsOnce(dt: number): void {
     const gHead = rotateVec(quatInvert(qHead), v3(...G_WORLD));
     const { canal, side, type } = bppvSelection;
 
-    if (type === 'canalithiasis') {
+    // Cupulolithiasis debris that has DETACHED from the cupula is no longer stuck --
+    // clinically, it's now free-floating debris in the duct, exactly canalithiasis's
+    // physics, starting from the cupula end (s=0, where it just came free). So a
+    // detached cupulolithiasis selection reuses the same stepCanalith/clearedToast path
+    // canalithiasis itself uses, rather than having its own separate "cleared" concept --
+    // the ONLY thing distinguishing it from a plain canalithiasis selection at that point
+    // is that it was preceded by a detach event (see the cupulolith branch below).
+    if (type === 'canalithiasis' || cupulolithDetached) {
       const stepResult = stepCanalith(canalithState, canal, side, gHead, dt);
       canalithState = stepResult.state;
       debrisFlow = { [canal]: { [side]: stepResult.flow } } as Partial<PerCanalSide<number>>;
@@ -583,12 +607,16 @@ function stepPhysicsOnce(dt: number): void {
       debrisFlow = { [canal]: { [side]: stepResult.flow } } as Partial<PerCanalSide<number>>;
       lastDebrisArcFraction = 0;
 
-      // Rising edge only, same convention as canalithiasis's clearance toast above --
-      // fires once when the clump detaches, not on every subsequent tick.
+      // Rising edge only -- fires once when the clump detaches, not on every subsequent
+      // tick. This is the "debris detached, now free-floating" event, distinct from
+      // clearedToast* (fired above once the now-mobile debris subsequently clears into
+      // the utricle) -- clinically these are two separate milestones for cupulolithiasis,
+      // where canalithiasis only has the one.
       if (wasAttached && !cupulolithState.attached) {
-        (side === 'left' ? clearedToastLeft : clearedToastRight).show();
+        (side === 'left' ? detachedToastLeft : detachedToastRight).show();
+        cupulolithDetached = true;
+        canalithState = initialCanalithState();
       }
-      wasClearedIntoUtricle = !cupulolithState.attached;
     }
   }
 
@@ -638,22 +666,18 @@ function renderFrame(): void {
     anterior: lastFiringRates.anterior.right,
     posterior: lastFiringRates.posterior.right,
   });
+  // stuck (pinned-at-cupula, dull clump visual) only while a cupulolithiasis lesion is
+  // still attached -- once detached it's free-floating debris and reads as the normal
+  // mobile canalithiasis marker (see stepPhysicsOnce's cupulolithDetached conversion).
+  const debrisStuck = bppvSelection?.type === 'cupulolithiasis' && !cupulolithDetached;
   canalSceneLeft.setDebris(
     bppvSelection && bppvSelection.side === 'left'
-      ? {
-          canal: bppvSelection.canal,
-          arcFraction: lastDebrisArcFraction,
-          stuck: bppvSelection.type === 'cupulolithiasis',
-        }
+      ? { canal: bppvSelection.canal, arcFraction: lastDebrisArcFraction, stuck: debrisStuck }
       : null
   );
   canalSceneRight.setDebris(
     bppvSelection && bppvSelection.side === 'right'
-      ? {
-          canal: bppvSelection.canal,
-          arcFraction: lastDebrisArcFraction,
-          stuck: bppvSelection.type === 'cupulolithiasis',
-        }
+      ? { canal: bppvSelection.canal, arcFraction: lastDebrisArcFraction, stuck: debrisStuck }
       : null
   );
 
