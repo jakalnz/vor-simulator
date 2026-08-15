@@ -239,6 +239,10 @@ const COLOR_SATURATION_HZ = 30;
  * PARTICLE_OFFSETS cluster, see physics research notes), deliberately distinct from both
  * the excite/inhibit red/blue and the glassy context-mesh tints. */
 const CLOT_COLOR = 0xc9a227;
+/** Cupulolithiasis clot color -- a duller, redder clump tint distinct from
+ * canalithiasis's gold CLOT_COLOR, reading as "stuck matter" rather than "loose grains
+ * still swimming" since it never moves once shown (see setDebris's stuck param). */
+const CUPULOLITH_CLOT_COLOR = 0x9a5b3c;
 /** Small jittered offsets (meters) for a 7-sphere granular cluster, rather than one smooth
  * sphere -- reads visually as loose debris, not a single object. */
 const CLOT_PARTICLE_OFFSETS: [number, number, number][] = [
@@ -301,6 +305,9 @@ export class CanalScene {
   /** Otoconia clot cluster (BPPV canalithiasis debris marker), hidden until setDebris is
    * called with a non-null selection -- see physics/canalith.ts's arc-length model. */
   private readonly clotGroup = new THREE.Group();
+  /** Shared material for every clotGroup sphere -- assigned in the constructor, its color
+   * swapped between CLOT_COLOR and CUPULOLITH_CLOT_COLOR by setDebris's stuck param. */
+  private clotMaterial!: THREE.MeshStandardMaterial;
   /** Canvas drawing-buffer size (px) the camera was last fit to -- see render()'s resize
    * check. Starts at 0 so the very first render after the mesh loads always fits. */
   private lastFitWidth = 0;
@@ -427,10 +434,10 @@ export class CanalScene {
     this.camera.position.set(0.024, 0.012, 0);
     this.camera.lookAt(0, 0, 0);
 
-    const clotMaterial = new THREE.MeshStandardMaterial({ color: CLOT_COLOR, emissive: CLOT_COLOR, emissiveIntensity: 0.3, roughness: 0.6 });
+    this.clotMaterial = new THREE.MeshStandardMaterial({ color: CLOT_COLOR, emissive: CLOT_COLOR, emissiveIntensity: 0.3, roughness: 0.6 });
     const clotGeometry = new THREE.SphereGeometry(CLOT_PARTICLE_RADIUS, 8, 6);
     for (const [ox, oy, oz] of CLOT_PARTICLE_OFFSETS) {
-      const mesh = new THREE.Mesh(clotGeometry, clotMaterial);
+      const mesh = new THREE.Mesh(clotGeometry, this.clotMaterial);
       mesh.position.set(ox, oy, oz);
       this.clotGroup.add(mesh);
     }
@@ -1081,7 +1088,7 @@ export class CanalScene {
    * side-mirror transform -- positioning the clot there, not on headGroup, means it
    * inherits both that mirror and the per-frame head-orientation rotation automatically.
    */
-  setDebris(selection: { canal: CanalType; arcFraction: number } | null): void {
+  setDebris(selection: { canal: CanalType; arcFraction: number; stuck?: boolean } | null): void {
     if (!selection) {
       this.clotGroup.visible = false;
       return;
@@ -1089,6 +1096,9 @@ export class CanalScene {
     const p = ductPositionAtFraction(selection.canal, selection.arcFraction);
     this.clotGroup.position.set(p[0], p[1], p[2]);
     this.clotGroup.visible = true;
+    const color = selection.stuck ? CUPULOLITH_CLOT_COLOR : CLOT_COLOR;
+    this.clotMaterial.color.setHex(color);
+    this.clotMaterial.emissive.setHex(color);
   }
 
   render(): void {

@@ -1,4 +1,5 @@
 import { CanalType, EarSide, ALL_CANAL_TYPES, ALL_EAR_SIDES } from '../physics/canal';
+import { BppvType } from '../physics/canalith';
 
 export type PlaybackMode = 'maneuver' | 'gyro' | 'mouse';
 
@@ -43,11 +44,12 @@ export interface ControlsCallbacks {
   /** Toggles one (canal, side)'s function scale between normal (1) and absent (0) --
    * simulating unilateral/selective vestibular loss for that canal. */
   onToggleCanalFunction: (canal: CanalType, side: EarSide, enabled: boolean) => void;
-  /** Selects which single (canal, side) has canalithiasis (free-floating debris) BPPV
-   * enabled, or null for none. Single-selection (radio-style), not per-canal toggles like
-   * onToggleCanalFunction -- this minimal-slice model only supports one affected
-   * canal+side at a time. */
-  onBppvSelectionChange: (selection: { canal: CanalType; side: EarSide } | null) => void;
+  /** Selects which single (canal, side, type) has BPPV enabled, or null for none.
+   * type distinguishes canalithiasis (free-floating debris) from cupulolithiasis
+   * (debris adherent to the cupula) -- see physics/canalith.ts's BppvType.
+   * Single-selection (radio-style), not per-canal toggles like onToggleCanalFunction --
+   * this minimal-slice model only supports one affected canal+side+type at a time. */
+  onBppvSelectionChange: (selection: { canal: CanalType; side: EarSide; type: BppvType } | null) => void;
   onSelectManeuver: (key: ManeuverKey) => void;
   onPlay: () => void;
   onPause: () => void;
@@ -157,24 +159,40 @@ export class Controls {
     noneRow.append(noneRadio, noneText);
     bppvRadios.push(noneRow);
 
+    // Cupulolithiasis (debris adherent to the cupula, rather than free-floating) is only
+    // offered for horizontal and posterior -- anterior-canal cupulolithiasis is clinically
+    // rare enough that there's no literature-anchored maneuver in this app to provoke/treat
+    // it against (see MANEUVERS_BY_CANAL, which reuses the posterior list for anterior).
+    const BPPV_TYPES_BY_CANAL: Record<CanalType, BppvType[]> = {
+      horizontal: ['canalithiasis', 'cupulolithiasis'],
+      posterior: ['canalithiasis', 'cupulolithiasis'],
+      anterior: ['canalithiasis'],
+    };
+    const BPPV_TYPE_LABELS: Record<BppvType, string> = {
+      canalithiasis: 'canalithiasis',
+      cupulolithiasis: 'cupulolithiasis',
+    };
+
     for (const side of ALL_EAR_SIDES) {
       for (const canal of ALL_CANAL_TYPES) {
-        const row = document.createElement('label');
-        row.className = 'canal-function-row';
-        const radio = document.createElement('input');
-        radio.type = 'radio';
-        radio.name = 'bppv-selection';
-        const sideLabel = side === 'right' ? 'Right' : 'Left';
-        radio.addEventListener('change', () => {
-          if (radio.checked) {
-            callbacks.onBppvSelectionChange({ canal, side });
-            this.setManeuverCanal(canal);
-          }
-        });
-        const text = document.createElement('span');
-        text.textContent = `${sideLabel} ${CANAL_LABELS[canal]}`;
-        row.append(radio, text);
-        bppvRadios.push(row);
+        for (const type of BPPV_TYPES_BY_CANAL[canal]) {
+          const row = document.createElement('label');
+          row.className = 'canal-function-row';
+          const radio = document.createElement('input');
+          radio.type = 'radio';
+          radio.name = 'bppv-selection';
+          const sideLabel = side === 'right' ? 'Right' : 'Left';
+          radio.addEventListener('change', () => {
+            if (radio.checked) {
+              callbacks.onBppvSelectionChange({ canal, side, type });
+              this.setManeuverCanal(canal);
+            }
+          });
+          const text = document.createElement('span');
+          text.textContent = `${sideLabel} ${CANAL_LABELS[canal]} — ${BPPV_TYPE_LABELS[type]}`;
+          row.append(radio, text);
+          bppvRadios.push(row);
+        }
       }
     }
 

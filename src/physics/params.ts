@@ -106,3 +106,53 @@ export const DEBRIS_MOBILITY_M_PER_S = 0.0025;
  * for empirical tuning once exercised live.
  */
 export const DEBRIS_FLOW_GAIN_PER_M_S = 600;
+
+/**
+ * Cupulolithiasis (otoconia debris adherent directly to the cupula) cupula-flow gain,
+ * applied to dot(gHead, ductTangent(canal, side, 0)) -- i.e. gravity's component along the
+ * ampullofugal tangent AT the cupula (see cupulolith.ts). Unlike canalithiasis this flow
+ * never zeroes out on its own (there's no arc position to clear), so a sustained tilt
+ * produces a sustained (non-fatiguing) cupula deflection via updateCupula's normal
+ * steady-state (beta_ss = flow * tau) -- the clinically-correct persistent-positional-
+ * nystagmus behavior falls out of the existing Steinhausen filter with no extra decay
+ * logic. Chosen so full gravity alignment (dot=1) produces a deflection comparable in
+ * magnitude to canalithiasis's DEBRIS_FLOW_GAIN_PER_M_S * DEBRIS_MOBILITY_M_PER_S at its
+ * own full-alignment dsdt, so the two pathologies read as comparably "visible" in the
+ * firing-rate/eye-movement display. Flagged for empirical tuning once exercised live.
+ */
+export const CUPULOLITH_FLOW_GAIN = 1.5;
+
+/**
+ * Angular speed (rad/s) |omegaBody| must sustain, for JOLT_SUSTAIN_TICKS consecutive
+ * physics ticks, to register as a genuine detachment-triggering "jolt" during a
+ * liberatory maneuver (Semont liberatory / Zuma) -- see cupulolith.ts's doc comment for
+ * why a raw frame-to-frame acceleration spike can't be used (ManeuverPlayer's linear
+ * slerp between waypoints makes velocity piecewise-constant, so acceleration spikes at
+ * every waypoint boundary regardless of how brisk that segment actually is). A brisk
+ * clinical head/body swing is on the order of several rad/s; this threshold is set well
+ * below that so a genuine liberatory swing clears it comfortably while an ordinary slow
+ * repositioning move (or a "Hold" step) does not. Flagged for empirical tuning once
+ * exercised live against maneuvers/semont.ts and maneuvers/zuma.ts.
+ */
+export const JOLT_SPEED_THRESHOLD_RAD_S = 1.2;
+
+/** Consecutive physics ticks (at FIXED_DT, see main.ts) that |omegaBody| must stay above
+ * JOLT_SPEED_THRESHOLD_RAD_S before a cupulolithiasis lesion detaches -- requiring a short
+ * sustained run (rather than a single tick) rejects one-off sensor/timestamp noise (see
+ * JOLT_MIN_VELOCITY_DT_S) while still resolving well within a maneuver's brisk swing,
+ * which lasts on the order of a second. At 120Hz, 12 ticks is ~0.1s. */
+export const JOLT_SUSTAIN_TICKS = 12;
+
+/**
+ * Floor (seconds) on a physics tick's velocityDt (see main.ts's stepPhysicsOnce) below
+ * which that tick's |omegaBody| is treated as an unreliable sample and excluded from the
+ * JOLT_SUSTAIN_TICKS count, rather than as genuine fast motion. Real device
+ * `deviceorientation` events can arrive with noisy/quantized inter-sample timestamps;
+ * dividing a small orientation delta by an underestimated elapsed time can otherwise
+ * produce a spuriously huge instantaneous angular speed from ordinary sensor jitter while
+ * the head is nearly still. Set below the fixed 1/120s physics tick (so it never rejects
+ * ticks driven by mouse-drag or scripted maneuver playback, both of which reuse dt itself
+ * as velocityDt -- see stepPhysicsOnce) but above the kind of sub-millisecond timestamp
+ * quantization glitches observed on real phone gyros.
+ */
+export const JOLT_MIN_VELOCITY_DT_S = 0.002;

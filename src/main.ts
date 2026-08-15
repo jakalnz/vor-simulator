@@ -2,7 +2,8 @@ import { Quat, angularVelocityBody, v3, rotateVec, quatInvert } from './physics/
 import { CanalType, EarSide, ALL_CANAL_TYPES } from './physics/canal';
 import { CanalFunction, normalCanalFunction, withCanalFunction } from './physics/pathology';
 import { VorEngineState, initialVorEngineState, stepVorEngine, PerCanalSide } from './physics/vorEngine';
-import { CanalithState, initialCanalithState, stepCanalith, sMax } from './physics/canalith';
+import { CanalithState, initialCanalithState, stepCanalith, sMax, BppvSelection } from './physics/canalith';
+import { CupulolithState, initialCupulolithState, stepCupulolith } from './physics/cupulolith';
 import { G_WORLD } from './physics/params';
 import QRCode from 'qrcode';
 
@@ -394,7 +395,7 @@ function activeOrientationSource(): OrientationSource {
 // bppvSelection immediately -- a `let` declared any later would still be in its
 // temporal dead zone at that point (confirmed live: threw "Cannot access
 // 'bppvSelection' before initialization").
-let bppvSelection: { canal: CanalType; side: EarSide } | null = null;
+let bppvSelection: BppvSelection = null;
 
 /** Rebuilds the active maneuver from the current key + the BPPV-selected side (defaults
  * to 'right' if no BPPV side is selected yet, since a maneuver still needs some side to
@@ -458,6 +459,7 @@ controls = new Controls(
     onBppvSelectionChange: (selection) => {
       bppvSelection = selection;
       canalithState = initialCanalithState();
+      cupulolithState = initialCupulolithState();
       clearedToastLeft.hideImmediately();
       clearedToastRight.hideImmediately();
       wasClearedIntoUtricle = false;
@@ -486,6 +488,7 @@ if (IS_MOBILE_SCREEN) enableGyro();
 // see its own doc comment).
 let vorState: VorEngineState = initialVorEngineState();
 let canalithState: CanalithState = initialCanalithState();
+let cupulolithState: CupulolithState = initialCupulolithState();
 let lastDebrisArcFraction = 0;
 /** Tracks the previous tick's cleared-into-utricle state so the toast fires once on the
  * rising edge (debris just settled in the utricle), not every tick while it stays there. */
@@ -503,6 +506,7 @@ let prevSampleTimestampMs: number | null = null;
 function resetPhysics(): void {
   vorState = initialVorEngineState();
   canalithState = initialCanalithState();
+  cupulolithState = initialCupulolithState();
   wasClearedIntoUtricle = false;
   clearedToastLeft.hideImmediately();
   clearedToastRight.hideImmediately();
@@ -553,22 +557,39 @@ function stepPhysicsOnce(dt: number): void {
     // Gravity direction in HeadFrame this tick: qHead maps head->world (see
     // physics/types.ts's rotateVec doc comment), so rotating world gravity by qHead's
     // inverse gives gravity's direction as seen in the head's own frame -- what
-    // canalith.ts needs to know which way debris is pulled along the duct.
+    // canalith.ts/cupulolith.ts need to know which way debris is pulled/biased.
     const gHead = rotateVec(quatInvert(qHead), v3(...G_WORLD));
-    const { canal, side } = bppvSelection;
-    const stepResult = stepCanalith(canalithState, canal, side, gHead, dt);
-    canalithState = stepResult.state;
-    debrisFlow = { [canal]: { [side]: stepResult.flow } } as Partial<PerCanalSide<number>>;
-    const max = sMax(canal, side);
-    lastDebrisArcFraction = canalithState.s / max;
+    const { canal, side, type } = bppvSelection;
 
-    // Rising edge only -- fires once when the debris settles into the utricle, not on
-    // every subsequent tick while it stays there (see wasClearedIntoUtricle's doc comment).
-    const clearedIntoUtricle = canalithState.s >= max;
-    if (clearedIntoUtricle && !wasClearedIntoUtricle) {
-      (side === 'left' ? clearedToastLeft : clearedToastRight).show();
+    if (type === 'canalithiasis') {
+      const stepResult = stepCanalith(canalithState, canal, side, gHead, dt);
+      canalithState = stepResult.state;
+      debrisFlow = { [canal]: { [side]: stepResult.flow } } as Partial<PerCanalSide<number>>;
+      const max = sMax(canal, side);
+      lastDebrisArcFraction = canalithState.s / max;
+
+      // Rising edge only -- fires once when the debris settles into the utricle, not on
+      // every subsequent tick while it stays there (see wasClearedIntoUtricle's doc comment).
+      const clearedIntoUtricle = canalithState.s >= max;
+      if (clearedIntoUtricle && !wasClearedIntoUtricle) {
+        (side === 'left' ? clearedToastLeft : clearedToastRight).show();
+      }
+      wasClearedIntoUtricle = clearedIntoUtricle;
+    } else {
+      const omegaSpeed = Math.hypot(omegaBody[0], omegaBody[1], omegaBody[2]);
+      const wasAttached = cupulolithState.attached;
+      const stepResult = stepCupulolith(cupulolithState, canal, side, gHead, omegaSpeed, velocityDt);
+      cupulolithState = stepResult.state;
+      debrisFlow = { [canal]: { [side]: stepResult.flow } } as Partial<PerCanalSide<number>>;
+      lastDebrisArcFraction = 0;
+
+      // Rising edge only, same convention as canalithiasis's clearance toast above --
+      // fires once when the clump detaches, not on every subsequent tick.
+      if (wasAttached && !cupulolithState.attached) {
+        (side === 'left' ? clearedToastLeft : clearedToastRight).show();
+      }
+      wasClearedIntoUtricle = !cupulolithState.attached;
     }
-    wasClearedIntoUtricle = clearedIntoUtricle;
   }
 
   const result = stepVorEngine(vorState, omegaBody, dt, canalFunction, undefined, debrisFlow);
@@ -619,12 +640,20 @@ function renderFrame(): void {
   });
   canalSceneLeft.setDebris(
     bppvSelection && bppvSelection.side === 'left'
-      ? { canal: bppvSelection.canal, arcFraction: lastDebrisArcFraction }
+      ? {
+          canal: bppvSelection.canal,
+          arcFraction: lastDebrisArcFraction,
+          stuck: bppvSelection.type === 'cupulolithiasis',
+        }
       : null
   );
   canalSceneRight.setDebris(
     bppvSelection && bppvSelection.side === 'right'
-      ? { canal: bppvSelection.canal, arcFraction: lastDebrisArcFraction }
+      ? {
+          canal: bppvSelection.canal,
+          arcFraction: lastDebrisArcFraction,
+          stuck: bppvSelection.type === 'cupulolithiasis',
+        }
       : null
   );
 

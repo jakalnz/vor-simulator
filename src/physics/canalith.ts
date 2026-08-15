@@ -196,7 +196,9 @@ export function stepCanalith(
   return { state: { s }, flow };
 }
 
-export type BppvSelection = { canal: CanalType; side: EarSide } | null;
+export type BppvType = 'canalithiasis' | 'cupulolithiasis';
+
+export type BppvSelection = { canal: CanalType; side: EarSide; type: BppvType } | null;
 
 export function allCanalTypes(): readonly CanalType[] {
   return ALL_CANAL_TYPES;
