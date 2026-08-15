@@ -123,8 +123,9 @@ export const DEBRIS_FLOW_GAIN_PER_M_S = 600;
 export const CUPULOLITH_FLOW_GAIN = 1.5;
 
 /**
- * Angular speed (rad/s) |omegaBody| must sustain, for JOLT_SUSTAIN_TICKS consecutive
- * physics ticks, to register as a genuine detachment-triggering "jolt" during a
+ * Angular speed (rad/s) |omegaBody| must sustain, cumulatively for JOLT_SUSTAIN_SECONDS
+ * (see that constant's own doc comment), to register as a genuine detachment-triggering
+ * "jolt" during a
  * liberatory maneuver (Semont liberatory / Zuma) -- see cupulolith.ts's doc comment for
  * why a raw frame-to-frame acceleration spike can't be used (ManeuverPlayer's linear
  * slerp between waypoints makes velocity piecewise-constant, so acceleration spikes at
@@ -149,11 +150,15 @@ export const JOLT_SPEED_THRESHOLD_RAD_S = 1.2;
  * streak of exactly 1 tick, regardless of how long the swing was sustained -- this was
  * the reported live bug: cupulolithiasis wouldn't detach in gyro mode, or even reliably
  * in scripted maneuver mode). The leaky-bucket accumulator instead ADDS each sample's own
- * real-time span (velocityDt) while above threshold and DECAYS (rather than hard-resets)
- * otherwise, so several genuine high-speed samples spread across sparse polling still sum
- * to a real sustained duration. 0.15s is comfortably inside a single brisk maneuver swing
+ * real-time span (velocityDt, capped per-sample by JOLT_MAX_SAMPLE_CONTRIBUTION_S -- see
+ * its own doc comment for why an UNcapped span reintroduces essentially the same bug from
+ * the other direction, a single anomalously long sample satisfying the whole requirement
+ * on its own) while above threshold, and DECAYS (rather than hard-resets) otherwise, so
+ * several genuine high-speed samples spread across sparse polling still sum to a real
+ * sustained duration. 0.15s is comfortably inside a single brisk maneuver swing
  * (~1s) or handshake gesture, while being long enough that isolated single-sample spikes
- * (even after JOLT_MIN_VELOCITY_DT_S's floor) can't trigger it alone.
+ * (even after JOLT_MIN_VELOCITY_DT_S's floor and JOLT_MAX_SAMPLE_CONTRIBUTION_S's ceiling)
+ * can't trigger it alone.
  */
 export const JOLT_SUSTAIN_SECONDS = 0.15;
 
@@ -165,6 +170,21 @@ export const JOLT_SUSTAIN_SECONDS = 0.15;
  * than that eventually lets any transient spike decay away rather than accumulating
  * indefinitely. */
 export const JOLT_LEAK_TAU_S = 0.4;
+
+/**
+ * Ceiling (seconds) on how much a SINGLE tick can add to cupulolith.ts's jitterSeconds
+ * leaky-bucket accumulator, regardless of that tick's own velocityDt. Without this, one
+ * anomalously large velocityDt sample -- e.g. a real clock gap after the gyro was
+ * paused/backgrounded and then resumed, or the tab regaining focus, both of which report
+ * a large genuine elapsed time between orientation samples -- could single-handedly
+ * satisfy the entire JOLT_SUSTAIN_SECONDS requirement in one tick, detaching the lesion
+ * instantly with no actual sustained fast motion (confirmed live: cupulolithiasis
+ * detached immediately, before the clot marker had moved at all). Capped at roughly the
+ * per-sample span implied by JOLT_SUSTAIN_SECONDS's own realistic ~20Hz polling
+ * assumption, so genuine detachment still requires several separate above-threshold
+ * samples, never just one unusually long one.
+ */
+export const JOLT_MAX_SAMPLE_CONTRIBUTION_S = 0.05;
 
 /**
  * Floor (seconds) on a physics tick's velocityDt (see main.ts's stepPhysicsOnce) below

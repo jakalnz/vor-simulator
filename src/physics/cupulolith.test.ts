@@ -73,6 +73,17 @@ describe('stepCupulolith detachment', () => {
     expect(state.attached).toBe(true);
   });
 
+  it('does not detach from a single anomalously long-duration sample (e.g. gyro resumed after being paused/backgrounded)', () => {
+    // Regression test for a reported live bug: cupulolithiasis detached the instant it
+    // was selected, before the clot marker had moved at all. Root cause -- one tick with
+    // a large velocityDt (a real clock gap after a pause/resume, common right after
+    // toggling a pathology or the gyro) could single-handedly satisfy the whole
+    // JOLT_SUSTAIN_SECONDS requirement, since the leaky bucket added velocityDt uncapped.
+    const tangentAtCupula = ductTangent('posterior', 'right', 0);
+    const state = stepCupulolith(initialCupulolithState(), 'posterior', 'right', tangentAtCupula, 1.5, 0.5).state;
+    expect(state.attached).toBe(true);
+  });
+
   it('detaches from a genuine sustained swing even when sampled sparsely (real gyro poll rate), which a consecutive-tick counter could not', () => {
     // Regression test for a reported live bug: a brisk ~180deg/s, 1-second swing produced
     // no detachment in gyro mode. Root cause -- physics ticks at 120Hz, but real

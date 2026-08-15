@@ -7,6 +7,7 @@ import {
   JOLT_SUSTAIN_SECONDS,
   JOLT_LEAK_TAU_S,
   JOLT_MIN_VELOCITY_DT_S,
+  JOLT_MAX_SAMPLE_CONTRIBUTION_S,
 } from './params';
 
 /**
@@ -81,7 +82,7 @@ export function stepCupulolith(
   if (velocityDt >= JOLT_MIN_VELOCITY_DT_S) {
     jitterSeconds =
       omegaSpeed > JOLT_SPEED_THRESHOLD_RAD_S
-        ? jitterSeconds + velocityDt
+        ? jitterSeconds + Math.min(velocityDt, JOLT_MAX_SAMPLE_CONTRIBUTION_S)
         : jitterSeconds * Math.exp(-velocityDt / JOLT_LEAK_TAU_S);
   }
 
