@@ -180,6 +180,23 @@ body {
   margin-left: auto;
 }
 
+/* One labelled option group (View / Ears / Signal) inside the "Display" submenu -- the
+ * groups sit side by side and wrap onto their own rows on narrow screens. */
+.display-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-right: 10px;
+}
+
+.display-group-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  opacity: 0.65;
+}
+
 .about-pill:hover {
   background: var(--panel-header);
   color: var(--text);

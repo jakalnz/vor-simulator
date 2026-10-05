@@ -238,7 +238,7 @@ canalFlowShadingToggleBtn.addEventListener('click', () => {
   canalFlowShadingToggleBtn.textContent = `Flow shading: ${flowShadingEnabled ? 'On' : 'Off'}`;
 });
 
-// "Ear view" mode -- 'head' (default, matches the head model's own front-on view) or
+// Display submenu, View group -- 'head' (default, matches the head model's own front-on view) or
 // 'lateral' (this app's ORIGINAL default before that change, showing the horizontal
 // canal face-on -- brought back as a selectable option, not a replacement). Independent
 // of Micro fluid view, which always keeps its own fixed zoom angle regardless of this.
@@ -257,18 +257,46 @@ document.addEventListener('click', (e) => {
     canalOrientSubmenu.hidden = true;
   }
 });
-for (const btn of canalOrientSubmenu.querySelectorAll<HTMLButtonElement>('button[data-orient]')) {
-  btn.addEventListener('click', () => {
-    const mode = btn.dataset.orient as 'head' | 'lateral';
-    canalSceneLeft.setOverviewMode(mode);
-    canalSceneRight.setOverviewMode(mode);
-    canalOrientToggleBtn.textContent = `Ear view: ${mode === 'head' ? 'Head orientation' : 'Lateral view'}`;
-    for (const other of canalOrientSubmenu.querySelectorAll('button')) other.classList.remove('is-active');
-    btn.classList.add('is-active');
-    orientSubmenuOpen = false;
-    canalOrientSubmenu.hidden = true;
-  });
+/** Wires one labelled option group in the "Display" submenu: marks the clicked button
+ * active among its OWN group's siblings only (the other groups keep their selection),
+ * and leaves the submenu open so several options can be set in one go. */
+function wireDisplayGroup(attr: string, onSelect: (value: string) => void): void {
+  const buttons = canalOrientSubmenu.querySelectorAll<HTMLButtonElement>(`button[data-${attr}]`);
+  for (const btn of buttons) {
+    btn.addEventListener('click', () => {
+      for (const other of buttons) other.classList.remove('is-active');
+      btn.classList.add('is-active');
+      onSelect(btn.dataset[attr]!);
+    });
+  }
 }
+
+wireDisplayGroup('orient', (value) => {
+  const mode = value as 'head' | 'lateral';
+  canalSceneLeft.setOverviewMode(mode);
+  canalSceneRight.setOverviewMode(mode);
+});
+
+// Single-ear option -- hides the other ear's pane so the remaining one fills the panel
+// width (its CanalScene refits to the new aspect on its next render; see render()'s
+// resize check). renderFrame skips rendering the hidden scene, but every other per-frame
+// setter still runs for both, so switching back is seamless.
+const canalPaneLeft = document.getElementById('canal-pane-left') as HTMLDivElement;
+const canalPaneRight = document.getElementById('canal-pane-right') as HTMLDivElement;
+let earsShown: 'both' | EarSide = 'both';
+wireDisplayGroup('ears', (value) => {
+  earsShown = value as 'both' | EarSide;
+  canalPaneLeft.hidden = earsShown === 'right';
+  canalPaneRight.hidden = earsShown === 'left';
+});
+
+const canalLegendCupulaLabel = document.getElementById('canal-legend-cupula-label') as HTMLSpanElement;
+wireDisplayGroup('signal', (value) => {
+  const signal = value as 'duct' | 'cupula';
+  canalSceneLeft.setSignalMode(signal);
+  canalSceneRight.setSignalMode(signal);
+  canalLegendCupulaLabel.textContent = signal === 'cupula' ? 'Cupula (at rest)' : 'Cupula';
+});
 
 /** Combined (left+right) firing-rate deviation from baseline for one canal PLANE --
  * horizontal is that canal on both ears, LARP/RALP each combine two DIFFERENT canal
@@ -711,8 +739,8 @@ function renderFrame(): void {
   eyeSceneLeft.render();
   eyeSceneRight.render();
   if (canalView === 'ear') {
-    canalSceneLeft.render();
-    canalSceneRight.render();
+    if (earsShown !== 'right') canalSceneLeft.render();
+    if (earsShown !== 'left') canalSceneRight.render();
   } else {
     canalHexPlot.setFiringRates(lastFiringRates);
     canalHexPlot.render();

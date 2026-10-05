@@ -191,7 +191,7 @@
             <span id="canal-panel-title">Semicircular canals</span>
             <button id="canal-view-toggle" class="about-pill" type="button" title="Switch between the 3D ear model and a neural firing-rate plot">Neural firing</button>
             <button id="canal-micro-toggle" class="about-pill" type="button" title="Zoom the camera in on the actively-stimulated ampulla to demonstrate fluid microdynamics">Micro fluid view</button>
-            <button id="canal-orient-toggle" class="about-pill" type="button" title="Switch the ear model's default camera angle">Ear view: Head orientation</button>
+            <button id="canal-orient-toggle" class="about-pill" type="button" title="Ear model display options: camera angle, which ears to show, and how excitation/inhibition is coloured">Display</button>
             <button id="canal-about-pill" class="about-pill" type="button">About</button>
           </h2>
           <div class="canal-micro-submenu" id="canal-micro-submenu" hidden>
@@ -202,17 +202,31 @@
             <button id="canal-flow-shading-toggle" class="about-pill canal-micro-submenu-right" type="button" title="Toggle the moving endolymph flow-band overlay on the duct/ampulla">Flow shading: Off</button>
           </div>
           <div class="canal-micro-submenu" id="canal-orient-submenu" hidden>
-            <button type="button" class="about-pill is-active" data-orient="head">Head orientation</button>
-            <button type="button" class="about-pill" data-orient="lateral">Lateral view</button>
+            <div class="display-group">
+              <span class="display-group-label">View</span>
+              <button type="button" class="about-pill is-active" data-orient="head">Head orientation</button>
+              <button type="button" class="about-pill" data-orient="lateral">Lateral view</button>
+            </div>
+            <div class="display-group">
+              <span class="display-group-label">Ears</span>
+              <button type="button" class="about-pill is-active" data-ears="both">Both</button>
+              <button type="button" class="about-pill" data-ears="right">Right</button>
+              <button type="button" class="about-pill" data-ears="left">Left</button>
+            </div>
+            <div class="display-group">
+              <span class="display-group-label">Signal</span>
+              <button type="button" class="about-pill is-active" data-signal="duct" title="Excited/inhibited canals glow red/blue along the whole duct">Duct glow</button>
+              <button type="button" class="about-pill" data-signal="cupula" title="Canals keep their identity colours; only the cupula turns red/blue">Cupula only</button>
+            </div>
           </div>
           <div class="canal-canvas-wrap canvas-wrap canvas-wrap--split" id="canal-ear-view">
-            <div class="split-pane">
+            <div class="split-pane" id="canal-pane-right">
               <span class="split-pane-label">Right ear</span>
               <canvas id="canal-canvas-right"></canvas>
               <div id="canal-cleared-toast-right" class="cleared-toast" hidden>👍 Cleared into the utricle</div>
               <div id="canal-detached-toast-right" class="cleared-toast" hidden>🔓 Debris detached from cupula</div>
             </div>
-            <div class="split-pane">
+            <div class="split-pane" id="canal-pane-left">
               <span class="split-pane-label">Left ear</span>
               <canvas id="canal-canvas-left"></canvas>
               <div id="canal-cleared-toast-left" class="cleared-toast" hidden>👍 Cleared into the utricle</div>
@@ -226,7 +240,7 @@
           <div class="canal-legend" id="canal-legend-ear">
             <div><span class="swatch" style="background:#e01b24"></span>Excited</div>
             <div><span class="swatch" style="background:#1a5fb4"></span>Inhibited</div>
-            <div><span class="swatch" style="background:#ffe000"></span>Cupula</div>
+            <div><span class="swatch" style="background:#ffe000"></span><span id="canal-legend-cupula-label">Cupula</span></div>
             <div><span class="swatch" style="background:#74c69d"></span>Horizontal canal</div>
             <div><span class="swatch" style="background:#9b7ed8"></span>Anterior canal</div>
             <div><span class="swatch" style="background:#d9a441"></span>Posterior canal</div>

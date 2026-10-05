@@ -114,6 +114,11 @@ const RIM_DARKEN_STRENGTH = 0.18;
  */
 const CUPULA_COLOR = 0xffe000;
 const CUPULA_OPACITY = 0.85;
+/** Cupula self-illumination at rest, and at full excite/inhibit in 'cupula' signal mode
+ * (see setSignalMode) -- raised with signal so the red/blue reads clearly on such a
+ * small membrane. */
+const CUPULA_REST_EMISSIVE = 0.4;
+const CUPULA_SIGNAL_EMISSIVE = 0.9;
 /**
  * Degrees the cupula wall mesh tilts (about its real base-anchored hinge, see
  * buildCupulaHinge) per unit of vorEngine.ts's cupula `beta`. A visualization gain --
@@ -255,6 +260,11 @@ const CLOT_PARTICLE_OFFSETS: [number, number, number][] = [
   [-0.00018, 0, -0.00012],
 ];
 const CLOT_PARTICLE_RADIUS = 0.00012;
+/** Uniform display scale applied to the whole clot cluster (particle radius AND spread
+ * together, so it still reads as a granular clump) -- a visualization gain, not anatomy:
+ * at true scale the cluster was reported as too small to follow during a maneuver, so it
+ * is deliberately drawn somewhat wider than the real duct lumen. */
+const CLOT_DISPLAY_SCALE = 2.5;
 
 /**
  * One ear's real-anatomy labyrinth (all 3 canal ducts + ampullae, common crus, utricle,
@@ -357,6 +367,8 @@ export class CanalScene {
   /** Which of the two camera directions above the OVERVIEW (not Micro fluid view's own
    * separate zoom logic) currently uses -- see setViewMode. */
   private overviewViewMode: 'head' | 'lateral' = 'head';
+  /** Where the excite/inhibit colour is drawn -- see setSignalMode. */
+  private signalMode: 'duct' | 'cupula' = 'duct';
 
   // Orientation gizmo -- see GIZMO_SIZE_PX's doc comment. A separate scene/camera (not a
   // child of labyrinthGroup/scene) so it can be drawn into its own small corner
@@ -434,13 +446,14 @@ export class CanalScene {
     this.camera.position.set(0.024, 0.012, 0);
     this.camera.lookAt(0, 0, 0);
 
-    this.clotMaterial = new THREE.MeshStandardMaterial({ color: CLOT_COLOR, emissive: CLOT_COLOR, emissiveIntensity: 0.3, roughness: 0.6 });
+    this.clotMaterial = new THREE.MeshStandardMaterial({ color: CLOT_COLOR, emissive: CLOT_COLOR, emissiveIntensity: 0.5, roughness: 0.6 });
     const clotGeometry = new THREE.SphereGeometry(CLOT_PARTICLE_RADIUS, 8, 6);
     for (const [ox, oy, oz] of CLOT_PARTICLE_OFFSETS) {
       const mesh = new THREE.Mesh(clotGeometry, this.clotMaterial);
       mesh.position.set(ox, oy, oz);
       this.clotGroup.add(mesh);
     }
+    this.clotGroup.scale.setScalar(CLOT_DISPLAY_SCALE);
     this.clotGroup.visible = false;
     this.labyrinthGroup.add(this.clotGroup);
 
@@ -675,12 +688,13 @@ export class CanalScene {
       // color-doubled glow before any real firing rate has landed.
       this.ductMaterials[canal].emissive.set(0x000000);
       this.ductMaterials[canal].emissiveIntensity = 0;
-      // Fixed high-visibility color, not touched by setFiringRates -- see CUPULA_COLOR's
-      // doc comment for why this reverted from a per-canal excite/inhibit signal.
+      // Fixed high-visibility color by default -- see CUPULA_COLOR's doc comment for why
+      // this reverted from a per-canal excite/inhibit signal. The optional 'cupula'
+      // signal mode (setSignalMode) brings that back as a user choice.
       this.cupulaMaterials[canal] = new THREE.MeshPhysicalMaterial({
         color: CUPULA_COLOR,
         emissive: CUPULA_COLOR,
-        emissiveIntensity: 0.4,
+        emissiveIntensity: CUPULA_REST_EMISSIVE,
         transparent: true,
         opacity: CUPULA_OPACITY,
         roughness: 0.4,
@@ -789,18 +803,56 @@ export class CanalScene {
     this.fitCamera();
   }
 
+  /**
+   * Bounding sphere of the loaded anatomy, with `center` in headGroup-LOCAL space (i.e.
+   * measured with headGroup's rotation at identity) -- see overviewTargetWorld, which
+   * re-rotates it every frame so the overview camera tracks the model's real centre as
+   * the head turns (headGroup pivots about the world origin, not about this centre).
+   *
+   * Radius is the max vertex distance from the centre, not Box3's circumsphere -- the box
+   * circumsphere is loose (box corners are empty space), which is what made the
+   * "contain" fit in fitCamera look too small the first time it was tried. The overlay
+   * arrows and clot are skipped: they're transient markers, not anatomy.
+   */
   private computeBoundingSphereInfo(): { center: THREE.Vector3; radius: number } {
-    // Measured with headGroup's dynamic rotation reset to identity -- an axis-aligned
-    // Box3 computed while rotated would give a rotation-dependent (generally larger,
-    // "diagonal") extent, not the object's true fixed shape.
     const savedQuat = this.headGroup.quaternion.clone();
     this.headGroup.quaternion.identity();
     this.headGroup.updateWorldMatrix(true, true);
-    const box = new THREE.Box3().setFromObject(this.labyrinthGroup);
-    const sphere = box.getBoundingSphere(new THREE.Sphere());
+
+    const skip = new Set<THREE.Object3D>([this.fluidArrow, this.headArrow, this.clotGroup]);
+    const meshes: THREE.Mesh[] = [];
+    const collect = (obj: THREE.Object3D) => {
+      if (skip.has(obj)) return;
+      if (obj instanceof THREE.Mesh) meshes.push(obj);
+      for (const child of obj.children) collect(child);
+    };
+    collect(this.labyrinthGroup);
+
+    const box = new THREE.Box3();
+    for (const mesh of meshes) box.expandByObject(mesh);
+    const center = box.getCenter(new THREE.Vector3());
+    const v = new THREE.Vector3();
+    let maxDistSq = 0;
+    for (const mesh of meshes) {
+      const position = mesh.geometry.getAttribute('position');
+      if (!position) continue;
+      for (let i = 0; i < position.count; i++) {
+        v.fromBufferAttribute(position, i).applyMatrix4(mesh.matrixWorld);
+        maxDistSq = Math.max(maxDistSq, v.distanceToSquared(center));
+      }
+    }
+
     this.headGroup.quaternion.copy(savedQuat);
     this.headGroup.updateWorldMatrix(true, true);
-    return { center: sphere.center, radius: sphere.radius };
+    return { center, radius: Math.sqrt(maxDistSq) };
+  }
+
+  /** The bounding sphere's centre in WORLD space under headGroup's current rotation --
+   * see computeBoundingSphereInfo's doc comment. */
+  private overviewTargetWorld(target: THREE.Vector3): THREE.Vector3 {
+    if (!this.boundingSphere) return target.set(0, 0, 0);
+    this.headGroup.updateWorldMatrix(true, false);
+    return this.headGroup.localToWorld(target.copy(this.boundingSphere.center));
   }
 
   /**
@@ -817,25 +869,26 @@ export class CanalScene {
    */
   private fitCamera(): void {
     if (!this.boundingSphere) return;
-    const margin = 1.15;
+    const margin = 1.05;
     const vFov = THREE.MathUtils.degToRad(this.camera.fov);
     const aspect = this.camera.aspect > 0 ? this.camera.aspect : 1;
     const radius = this.boundingSphere.radius * margin;
-    const distanceForVertical = radius / Math.tan(vFov / 2);
-    const distanceForHorizontal = radius / (Math.tan(vFov / 2) * aspect);
-    // Math.min ("cover" style -- fit tightly to whichever axis is MORE constraining, same
-    // idea as CSS object-fit: cover), not Math.max ("contain" -- guarantees the whole
-    // bounding sphere fits within frame, but on a narrow/tall aspect like a phone's
-    // portrait canal panel, that pulls the camera back far enough to satisfy the WIDE
-    // axis too, leaving the model looking small with large empty margins top/bottom --
-    // reported live). Cover-style allows the model to slightly overflow the frame on the
-    // less-constraining axis instead, matching how eyeScene.ts's fixed-distance camera
-    // already reads as consistently large regardless of aspect ratio.
-    const distance = Math.min(distanceForVertical, distanceForHorizontal);
-    // View from anterior (+X), matching this scene's constructor and headScene.ts's
-    // default front-on view of the head -- not a lateral (+-Z) view, which put the
-    // horizontal canal face-on instead (see setOrientation's caller / user request).
-    this.overviewTarget.copy(this.boundingSphere.center);
+    // Exact distance at which a sphere of this radius is tangent to the frustum's
+    // half-angle (radius / sin, not radius / tan -- tan under-estimates and clips the
+    // sphere's edge at close range).
+    const halfV = vFov / 2;
+    const halfH = Math.atan(Math.tan(halfV) * aspect);
+    const distanceForVertical = radius / Math.sin(halfV);
+    const distanceForHorizontal = radius / Math.sin(halfH);
+    // Math.max ("contain"): the whole sphere always fits on BOTH axes. A sphere is
+    // rotation-invariant, so combined with overviewTargetWorld tracking its real centre,
+    // no head orientation can push any canal out of frame (reported live: with the
+    // earlier "cover"-style Math.min fit and a fixed look-at point, some canals left
+    // the frame at certain orientations). An earlier contain attempt looked too small
+    // only because the radius then came from Box3's loose circumsphere -- see
+    // computeBoundingSphereInfo's tight vertex-based radius.
+    const distance = Math.max(distanceForVertical, distanceForHorizontal);
+    this.overviewTargetWorld(this.overviewTarget);
     this.overviewDistance = distance;
     // Only snap the camera directly when NOT mid-micro-zoom -- if a canal is currently
     // focused, updateCameraFocus's own per-frame lerp owns the camera this tick instead
@@ -911,6 +964,9 @@ export class CanalScene {
     const MICRO_ZOOM_DISTANCE_FACTOR = 0.16;
     const LERP = 0.12;
 
+    // Re-rotated every frame -- the labyrinth's centre moves as headGroup rotates about
+    // the world origin (see computeBoundingSphereInfo).
+    this.overviewTargetWorld(this.overviewTarget);
     let targetLookAt = this.overviewTarget;
     let targetDistance = this.overviewDistance;
     const focusedLocal = this.focusedCanal ? this.ampullaLocalPositions[this.focusedCanal] : undefined;
@@ -920,11 +976,16 @@ export class CanalScene {
       targetDistance = this.overviewDistance * MICRO_ZOOM_DISTANCE_FACTOR;
     }
 
-    this.currentLookTarget.lerp(targetLookAt, LERP);
+    // Once the overview glide has settled, follow the rotating centre exactly rather than
+    // lerping -- a lagging look-at point during a brisk head turn would let the model
+    // drift partly out of frame again.
+    const overviewSettled = !focusedLocal && Math.abs(this.currentDistance - targetDistance) < targetDistance * 0.01;
+    if (overviewSettled) this.currentLookTarget.copy(targetLookAt);
+    else this.currentLookTarget.lerp(targetLookAt, LERP);
     this.currentDistance += (targetDistance - this.currentDistance) * LERP;
     // Micro fluid view always uses the fixed anterior viewDir (arrow-direction
     // correctness depends on a consistent angle there -- see viewDir's own doc
-    // comment); only the whole-labyrinth OVERVIEW respects the "Ear view" mode toggle.
+    // comment); only the whole-labyrinth OVERVIEW respects the Display submenu's View setting.
     const dir = this.focusedCanal ? this.viewDir : this.overviewViewMode === 'lateral' ? this.lateralViewDir : this.viewDir;
     this.camera.position.copy(this.currentLookTarget).addScaledVector(dir, this.currentDistance);
     this.camera.lookAt(this.currentLookTarget);
@@ -955,8 +1016,34 @@ export class CanalScene {
 
       const material = this.ductMaterials[canal];
       if (!material) continue;
-      material.emissive.copy(glowColor);
-      material.emissiveIntensity = magnitude * GLOW_MAX_INTENSITY;
+      if (this.signalMode === 'cupula') {
+        // Ducts keep only their CANAL_TINT identity; the cupula alone carries the
+        // signal, crossfading from its resting yellow toward red/blue.
+        material.emissiveIntensity = 0;
+        const cupula = this.cupulaMaterials[canal];
+        if (cupula) {
+          cupula.color.setHex(CUPULA_COLOR).lerp(glowColor, magnitude);
+          cupula.emissive.copy(cupula.color);
+          cupula.emissiveIntensity = CUPULA_REST_EMISSIVE + magnitude * (CUPULA_SIGNAL_EMISSIVE - CUPULA_REST_EMISSIVE);
+        }
+      } else {
+        material.emissive.copy(glowColor);
+        material.emissiveIntensity = magnitude * GLOW_MAX_INTENSITY;
+      }
+    }
+  }
+
+  /** 'duct' (default): red/blue glow over each whole duct, cupula fixed yellow.
+   * 'cupula': ducts keep their plain identity tint and only the cupula changes colour --
+   * see setFiringRates. Takes effect on the next setFiringRates call (every frame). */
+  setSignalMode(mode: 'duct' | 'cupula'): void {
+    this.signalMode = mode;
+    if (mode === 'duct') {
+      for (const cupula of Object.values(this.cupulaMaterials)) {
+        cupula.color.setHex(CUPULA_COLOR);
+        cupula.emissive.setHex(CUPULA_COLOR);
+        cupula.emissiveIntensity = CUPULA_REST_EMISSIVE;
+      }
     }
   }
 
