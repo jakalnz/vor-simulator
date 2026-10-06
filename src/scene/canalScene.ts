@@ -59,7 +59,7 @@ const EAR_ANATOMY = earAnatomyData as unknown as EarAnatomyData;
 // was rotated). This is the duct's fixed identity color, permanently untouched by
 // setFiringRates -- excite/inhibit is instead an additive red/blue GLOW layered on top
 // (see GLOW_MAX_INTENSITY's doc comment), so these hues just need to stay visually
-// distinct from that red/blue glow and from the cupula's fixed yellow (CUPULA_COLOR), not
+// distinct from that red/blue glow and from the cupula's neutral grey (CUPULA_COLOR), not
 // from each other's crossfade path. Anterior was originally a cyan-teal (0x50c8dc) --
 // reported live as too close to the inhibitory blue glow (only ~60 degrees away on the
 // color wheel), swapped for violet/purple instead, which sits far from both red and blue.
@@ -111,13 +111,20 @@ const RIM_DARKEN_STRENGTH = 0.18;
  * read). The excite/inhibit signal now lives entirely on the duct via HSL
  * lightness/saturation modulation -- see setFiringRates. Hinge-rotated by cupula
  * deflection -- see buildCupulaHinge/setFluidVisuals.
+ *
+ * Neutral off-white, not the earlier saturated yellow (0xffe000) -- in 'cupula' signal
+ * mode (see setSignalMode) the rest colour is the start of the crossfade toward red/blue,
+ * and yellow->red / yellow->blue passed through orange and a muddy green respectively
+ * (reported live as a jarring, hard-to-read gradient). Grey->red and grey->blue are clean
+ * single-hue ramps, and grey stays visible against the tinted ducts without competing
+ * with their identity hues.
  */
-const CUPULA_COLOR = 0xffe000;
+const CUPULA_COLOR = 0xf0f0f0;
 const CUPULA_OPACITY = 0.85;
 /** Cupula self-illumination at rest, and at full excite/inhibit in 'cupula' signal mode
  * (see setSignalMode) -- raised with signal so the red/blue reads clearly on such a
  * small membrane. */
-const CUPULA_REST_EMISSIVE = 0.4;
+const CUPULA_REST_EMISSIVE = 0.55;
 const CUPULA_SIGNAL_EMISSIVE = 0.9;
 /**
  * Degrees the cupula wall mesh tilts (about its real base-anchored hinge, see
@@ -133,7 +140,7 @@ const CUPULA_TILT_CLAMP = 1.5;
  * reference teaching spec (claude_micro_view.MD) called for a bright WHITE fluid arrow,
  * but this scene's own ducts/ampullae are themselves pale grey/white (see CANAL_TINT) --
  * confirmed live that a white arrow all but disappeared against them. Orange (not the
- * cupula wall's own yellow, to avoid the two being confused for the same signal) keeps
+ * cupula wall's own colour, to avoid the two being confused for the same signal) keeps
  * the "distinct, high-visibility" intent without the contrast failure. */
 const FLUID_ARROW_COLOR = 0xff9500;
 const HEAD_ARROW_COLOR = 0x33ff66;
@@ -740,7 +747,12 @@ export class CanalScene {
         const resolved = resolveAssetUrl(anatomy.ampullaMesh, import.meta.env.BASE_URL, window.location.origin);
         const obj = await loader.loadAsync(resolved);
         obj.traverse((child) => {
-          if (child instanceof THREE.Mesh) child.material = this.cupulaMaterials[canal];
+          if (child instanceof THREE.Mesh) {
+            child.material = this.cupulaMaterials[canal];
+            // Drawn after the (transparent, depthWrite:false) ampulla bulge enclosing it,
+            // so the neutral cupula isn't washed into the bulge's canal tint.
+            child.renderOrder = 1;
+          }
         });
         const base = new THREE.Vector3(...anatomy.cupula.base);
         const pivot = new THREE.Group();
@@ -1018,7 +1030,7 @@ export class CanalScene {
       if (!material) continue;
       if (this.signalMode === 'cupula') {
         // Ducts keep only their CANAL_TINT identity; the cupula alone carries the
-        // signal, crossfading from its resting yellow toward red/blue.
+        // signal, crossfading from its resting grey toward red/blue.
         material.emissiveIntensity = 0;
         const cupula = this.cupulaMaterials[canal];
         if (cupula) {
@@ -1033,7 +1045,7 @@ export class CanalScene {
     }
   }
 
-  /** 'duct' (default): red/blue glow over each whole duct, cupula fixed yellow.
+  /** 'duct' (default): red/blue glow over each whole duct, cupula fixed neutral grey.
    * 'cupula': ducts keep their plain identity tint and only the cupula changes colour --
    * see setFiringRates. Takes effect on the next setFiringRates call (every frame). */
   setSignalMode(mode: 'duct' | 'cupula'): void {
