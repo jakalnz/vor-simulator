@@ -112,19 +112,20 @@ const RIM_DARKEN_STRENGTH = 0.18;
  * lightness/saturation modulation -- see setFiringRates. Hinge-rotated by cupula
  * deflection -- see buildCupulaHinge/setFluidVisuals.
  *
- * Neutral off-white, not the earlier saturated yellow (0xffe000) -- in 'cupula' signal
+ * Soft, semi-transparent neutral warm grey (an off-white was tried and read as too
+ * glaring -- reported live), not the earlier saturated yellow (0xffe000) -- in 'cupula' signal
  * mode (see setSignalMode) the rest colour is the start of the crossfade toward red/blue,
  * and yellow->red / yellow->blue passed through orange and a muddy green respectively
  * (reported live as a jarring, hard-to-read gradient). Grey->red and grey->blue are clean
  * single-hue ramps, and grey stays visible against the tinted ducts without competing
  * with their identity hues.
  */
-const CUPULA_COLOR = 0xf0f0f0;
-const CUPULA_OPACITY = 0.85;
+const CUPULA_COLOR = 0xd6d2ca;
+const CUPULA_OPACITY = 0.6;
 /** Cupula self-illumination at rest, and at full excite/inhibit in 'cupula' signal mode
  * (see setSignalMode) -- raised with signal so the red/blue reads clearly on such a
  * small membrane. */
-const CUPULA_REST_EMISSIVE = 0.55;
+const CUPULA_REST_EMISSIVE = 0.2;
 const CUPULA_SIGNAL_EMISSIVE = 0.9;
 /**
  * Degrees the cupula wall mesh tilts (about its real base-anchored hinge, see
