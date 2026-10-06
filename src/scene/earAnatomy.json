@@ -211,5 +211,7 @@
   },
   "commonCrusMesh": "/models/ear-anatomy/common-crus.obj",
   "utricleMesh": "/models/ear-anatomy/utricle.obj",
-  "sacculeMesh": "/models/ear-anatomy/saccule.obj"
+  "sacculeMesh": "/models/ear-anatomy/saccule.obj",
+  "skinMesh": "/models/ear-anatomy/labyrinth-skin.obj",
+  "envelopeMesh": "/models/ear-anatomy/fluid-envelope.obj"
 }

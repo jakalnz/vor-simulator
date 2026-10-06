@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
+import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { CanalType, EarSide, CANAL_PLANE_NORMAL, AMPULLOFUGAL_SIGN } from '../physics/canal';
 import { Quat } from '../physics/types';
 import { FIRING_BASELINE_HZ } from '../physics/params';
@@ -50,6 +51,8 @@ interface EarAnatomyData {
   utricleMesh: string;
   commonCrusMesh: string;
   sacculeMesh: string;
+  skinMesh: string;
+  envelopeMesh: string;
 }
 const EAR_ANATOMY = earAnatomyData as unknown as EarAnatomyData;
 
@@ -248,6 +251,51 @@ const GIZMO_COLOR_LATMED = 0x6ad98a;
  */
 const COLOR_SATURATION_HZ = 30;
 
+/**
+ * Identity colours/opacities for the non-canal structures, and the optional housing
+ * meshes -- chosen interactively in the Labyrinth Model Lab playground (satin finish, see
+ * canalColorMaterial). The skin's own per-vertex colours are baked by
+ * scripts/build-ear-assets/build.mjs (SKIN_COLORS) from these same values.
+ */
+const COMMON_CRUS_COLOR = 0xaaf3ee;
+const COMMON_CRUS_OPACITY = 0.2;
+const UTRICLE_COLOR = 0x8ca25d;
+const UTRICLE_OPACITY = 0.2;
+const SACCULE_COLOR = 0x4f454f;
+const SACCULE_OPACITY = 0.25;
+/** Unified skin: one seamless surface over the whole membranous labyrinth (see build.mjs),
+ * drawn as a faint shell so the joins between pieces read as continuous. */
+const SKIN_OPACITY = 0.25;
+/** Fluid envelope (T2-MRI fluid segmentation, cochlea included) -- optional bony
+ * "housing", off by default, see setEnvelopeVisible. */
+const ENVELOPE_COLOR = 0xb9c4cc;
+const ENVELOPE_OPACITY = 0.25;
+/** Draw order for the translucent layers (all depthWrite:false): pieces first (0), then the
+ * cupula (1) so the ampulla bulge doesn't wash it out, then the housing shells, so the
+ * coloured structures inside stay legible through them. */
+const SKIN_RENDER_ORDER = 2;
+const ENVELOPE_RENDER_ORDER = 3;
+
+/**
+ * OBJLoader returns non-indexed triangles and, when the file has no normals (ours don't),
+ * gives every triangle its own flat face normal -- which rendered the whole labyrinth as
+ * visibly faceted. Welding the duplicated corners back together and recomputing gives
+ * smooth shading. The tolerance must be tiny: the meshes are in METRES, and
+ * mergeVertices' default (1e-4, i.e. 0.1mm) would collapse real sub-millimetre detail.
+ */
+function useSmoothShading(obj: THREE.Object3D): void {
+  obj.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return;
+    const geometry = child.geometry as THREE.BufferGeometry;
+    geometry.deleteAttribute('normal');
+    geometry.deleteAttribute('uv');
+    const welded = mergeVertices(geometry, 1e-9);
+    welded.computeVertexNormals();
+    geometry.dispose();
+    child.geometry = welded;
+  });
+}
+
 /** Otoconia clot color -- gold, matching clinical illustration convention (old app's
  * PARTICLE_OFFSETS cluster, see physics research notes), deliberately distinct from both
  * the excite/inhibit red/blue and the glassy context-mesh tints. */
@@ -268,11 +316,12 @@ const CLOT_PARTICLE_OFFSETS: [number, number, number][] = [
   [-0.00018, 0, -0.00012],
 ];
 const CLOT_PARTICLE_RADIUS = 0.00012;
-/** Uniform display scale applied to the whole clot cluster (particle radius AND spread
- * together, so it still reads as a granular clump) -- a visualization gain, not anatomy:
- * at true scale the cluster was reported as too small to follow during a maneuver, so it
- * is deliberately drawn somewhat wider than the real duct lumen. */
-const CLOT_DISPLAY_SCALE = 2.5;
+/** Uniform display scale for the whole clot cluster (particle radius AND spread together,
+ * so it still reads as a granular clump) in the optional 'large' otoconia size -- a
+ * visualization gain, not anatomy: at true scale the cluster can be hard to follow during
+ * a maneuver, so this deliberately draws it wider than the real duct lumen. 'regular'
+ * (the default, see setOtoconiaSize) keeps scale 1. */
+const CLOT_LARGE_DISPLAY_SCALE = 2.5;
 
 /**
  * One ear's real-anatomy labyrinth (all 3 canal ducts + ampullae, common crus, utricle,
@@ -378,6 +427,18 @@ export class CanalScene {
   /** Where the excite/inhibit colour is drawn -- see setSignalMode. */
   private signalMode: 'duct' | 'cupula' = 'duct';
 
+  /** Housing shells (see SKIN_OPACITY/ENVELOPE_COLOR): the skin loads with the rest of
+   * the anatomy; the envelope only on first request (setEnvelopeVisible), since it's off
+   * by default and is the second-largest mesh file. */
+  private skinObject: THREE.Object3D | null = null;
+  private envelopeObject: THREE.Object3D | null = null;
+  private envelopeVisible = false;
+  private envelopeLoad: Promise<void> | null = null;
+  /** loadRealAnatomy's mesh loader, kept for the envelope's deferred load. */
+  private loadIntoFn:
+    | ((url: string, material: THREE.Material, parent?: THREE.Object3D, renderOrder?: number) => Promise<THREE.Object3D | null>)
+    | null = null;
+
   // Orientation gizmo -- see GIZMO_SIZE_PX's doc comment. A separate scene/camera (not a
   // child of labyrinthGroup/scene) so it can be drawn into its own small corner
   // viewport of the same canvas independently of the main render's camera/target/zoom.
@@ -461,7 +522,6 @@ export class CanalScene {
       mesh.position.set(ox, oy, oz);
       this.clotGroup.add(mesh);
     }
-    this.clotGroup.scale.setScalar(CLOT_DISPLAY_SCALE);
     this.clotGroup.visible = false;
     this.labyrinthGroup.add(this.clotGroup);
 
@@ -589,33 +649,19 @@ export class CanalScene {
 
   private async loadRealAnatomy(): Promise<void> {
     const loader = new OBJLoader();
-    const glassMaterial = (color: number, opacity: number) =>
-      new THREE.MeshPhysicalMaterial({
-        color,
-        transparent: true,
-        opacity,
-        roughness: 0.05,
-        metalness: 0,
-        clearcoat: 0.6,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      });
-    // Separate, LESS glossy/more opaque material factory for the per-canal
-    // excite/inhibit-colored meshes specifically -- a high clearcoat (near-mirror
-    // specular) throws a bright white highlight across the surface that visually competes
-    // with the emissive excite/inhibit color underneath (reported live: colors still hard
-    // to see even after driving .emissive). The other, purely decorative context meshes
-    // (utricle/connector/common crus/saccule below) don't carry a live signal, so they
-    // keep the glassier look.
+    // Satin finish (moderate roughness, no clearcoat) for every anatomy mesh -- chosen in
+    // the Labyrinth Model Lab playground over the earlier glassy look. Low gloss also
+    // matters for the canals specifically: a near-mirror highlight competed with the
+    // emissive excite/inhibit colour underneath (reported live).
     const canalColorMaterial = (color: number, opacity: number, flowCanal?: CanalType) => {
       const material = new THREE.MeshPhysicalMaterial({
         color,
         emissive: color,
         transparent: true,
         opacity,
-        roughness: 0.35,
+        roughness: 0.55,
         metalness: 0,
-        clearcoat: 0.1,
+        clearcoat: 0,
         depthWrite: false,
         side: THREE.DoubleSide,
       });
@@ -690,10 +736,9 @@ export class CanalScene {
     for (const canal of Object.keys(EAR_ANATOMY.canals) as CanalType[]) {
       this.ductMaterials[canal] = canalColorMaterial(CANAL_TINT[canal] ?? 0xdfeaf2, DUCT_OPACITY, canal);
       // No glow until the first setFiringRates call -- canalColorMaterial defaults
-      // .emissive to the same value as .color at full intensity (right for the
-      // non-signal-carrying materials that also use this factory, e.g. COMMON_CRUS_GLASS
-      // below), which would otherwise flash the duct as an unwanted extra-bright
-      // color-doubled glow before any real firing rate has landed.
+      // .emissive to the same value as .color at full intensity, which would otherwise
+      // flash the duct as an unwanted extra-bright color-doubled glow before any real
+      // firing rate has landed.
       this.ductMaterials[canal].emissive.set(0x000000);
       this.ductMaterials[canal].emissiveIntensity = 0;
       // Fixed high-visibility color by default -- see CUPULA_COLOR's doc comment for why
@@ -711,32 +756,51 @@ export class CanalScene {
         depthWrite: false,
       });
     }
-    // Common crus is anatomically just the shared trunk where the anterior and posterior
-    // ducts join -- tinted as a blend of CANAL_TINT.anterior/posterior (the two ducts it's
-    // actually continuous with) rather than the neutral grey COLOR_REST, which read as an
-    // odd whitish/colorless segment sitting between two visibly-tinted ducts. Given the
-    // same emissive canalColorMaterial (not the plain, non-emissive glassMaterial) so it
-    // reads at the same brightness as the duct meshes, rather than looking dark by
-    // comparison under ambient-only lighting.
-    const COMMON_CRUS_COLOR = new THREE.Color(CANAL_TINT.anterior).lerp(new THREE.Color(CANAL_TINT.posterior), 0.5);
-    const COMMON_CRUS_GLASS = canalColorMaterial(COMMON_CRUS_COLOR.getHex(), 0.28);
-    // Utricle/saccule tinted to match the otoconia clot (CLOT_COLOR) -- these are the
-    // otolith organs where the clot's otoconia debris actually originates.
-    const UTRICLE_GLASS = glassMaterial(CLOT_COLOR, 0.16);
-    const SACCULE_GLASS = glassMaterial(CLOT_COLOR, 0.2);
+    // Non-signal structures: same satin factory as the ducts, with the glow switched off
+    // (the factory's default emissive would otherwise make them brighter than the ducts,
+    // which sit at zero glow at rest). Colours: see COMMON_CRUS_COLOR etc.
+    const contextMaterial = (color: number, opacity: number) => {
+      const material = canalColorMaterial(color, opacity);
+      material.emissiveIntensity = 0;
+      return material;
+    };
+    const commonCrusMaterial = contextMaterial(COMMON_CRUS_COLOR, COMMON_CRUS_OPACITY);
+    const utricleMaterial = contextMaterial(UTRICLE_COLOR, UTRICLE_OPACITY);
+    const sacculeMaterial = contextMaterial(SACCULE_COLOR, SACCULE_OPACITY);
+    const skinMaterial = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: SKIN_OPACITY,
+      roughness: 0.55,
+      metalness: 0,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
 
-    const loadInto = async (url: string, material: THREE.Material, parent: THREE.Object3D = this.labyrinthGroup) => {
+    const loadInto = async (
+      url: string,
+      material: THREE.Material,
+      parent: THREE.Object3D = this.labyrinthGroup,
+      renderOrder = 0
+    ): Promise<THREE.Object3D | null> => {
       try {
         const resolved = resolveAssetUrl(url, import.meta.env.BASE_URL, window.location.origin);
         const obj = await loader.loadAsync(resolved);
+        useSmoothShading(obj);
         obj.traverse((child) => {
-          if (child instanceof THREE.Mesh) child.material = material;
+          if (child instanceof THREE.Mesh) {
+            child.material = material;
+            child.renderOrder = renderOrder;
+          }
         });
         parent.add(obj);
+        return obj;
       } catch (err) {
         console.warn(`Real anatomy mesh at ${url} failed to load.`, err);
+        return null;
       }
     };
+    this.loadIntoFn = loadInto;
 
     // Cupula wall mesh, wrapped in a pivot group anchored at the REAL cupula.base
     // landmark (not the mesh's own bounding-box center or a guessed point) -- see
@@ -747,6 +811,7 @@ export class CanalScene {
       try {
         const resolved = resolveAssetUrl(anatomy.ampullaMesh, import.meta.env.BASE_URL, window.location.origin);
         const obj = await loader.loadAsync(resolved);
+        useSmoothShading(obj);
         obj.traverse((child) => {
           if (child instanceof THREE.Mesh) {
             child.material = this.cupulaMaterials[canal];
@@ -806,11 +871,16 @@ export class CanalScene {
       // mismatched color at the exact point a student's eye is tracking a duct's own
       // identity color toward the crus/utricle junction.
       await loadInto(anatomy.connectorMesh, this.ductMaterials[canal], canalGroup);
-      if (anatomy.canalUtricleWallMesh) await loadInto(anatomy.canalUtricleWallMesh, COMMON_CRUS_GLASS, canalGroup);
+      // The horizontal canal's utricular sinus is the non-ampullated end of the same
+      // duct, so it shares the duct's material (identity tint + excite/inhibit glow).
+      if (anatomy.canalUtricleWallMesh) await loadInto(anatomy.canalUtricleWallMesh, this.ductMaterials[canal], canalGroup);
     }
-    await loadInto(EAR_ANATOMY.commonCrusMesh, COMMON_CRUS_GLASS);
-    await loadInto(EAR_ANATOMY.utricleMesh, UTRICLE_GLASS);
-    await loadInto(EAR_ANATOMY.sacculeMesh, SACCULE_GLASS);
+    await loadInto(EAR_ANATOMY.commonCrusMesh, commonCrusMaterial);
+    await loadInto(EAR_ANATOMY.utricleMesh, utricleMaterial);
+    await loadInto(EAR_ANATOMY.sacculeMesh, sacculeMaterial);
+    this.skinObject = await loadInto(EAR_ANATOMY.skinMesh, skinMaterial, this.labyrinthGroup, SKIN_RENDER_ORDER);
+    // Honour an envelope toggle made before this async load finished.
+    this.setEnvelopeVisible(this.envelopeVisible);
 
     this.boundingSphere = this.computeBoundingSphereInfo();
     this.fitCamera();
@@ -833,6 +903,7 @@ export class CanalScene {
     this.headGroup.updateWorldMatrix(true, true);
 
     const skip = new Set<THREE.Object3D>([this.fluidArrow, this.headArrow, this.clotGroup]);
+    if (this.envelopeObject) skip.add(this.envelopeObject); // see setEnvelopeVisible
     const meshes: THREE.Mesh[] = [];
     const collect = (obj: THREE.Object3D) => {
       if (skip.has(obj)) return;
@@ -958,6 +1029,7 @@ export class CanalScene {
     for (const [otherCanal, group] of Object.entries(this.canalGroups) as [CanalType, THREE.Group][]) {
       group.visible = canal === null || otherCanal === canal;
     }
+    this.applyHousingVisibility();
   }
 
   /**
@@ -1199,6 +1271,46 @@ export class CanalScene {
     const color = selection.stuck ? CUPULOLITH_CLOT_COLOR : CLOT_COLOR;
     this.clotMaterial.color.setHex(color);
     this.clotMaterial.emissive.setHex(color);
+  }
+
+  /** Shows/hides the T2-MRI fluid envelope around the labyrinth (off by default). Loaded
+   * on first show. Not part of the camera-fit bounding sphere (see
+   * computeBoundingSphereInfo): it includes the whole cochlea, and fitting to it would
+   * shrink the labyrinth itself -- so its cochlear end may run past the frame edge. */
+  setEnvelopeVisible(visible: boolean): void {
+    this.envelopeVisible = visible;
+    if (visible && !this.envelopeObject && !this.envelopeLoad && this.loadIntoFn) {
+      const material = new THREE.MeshStandardMaterial({
+        color: ENVELOPE_COLOR,
+        transparent: true,
+        opacity: ENVELOPE_OPACITY,
+        roughness: 0.55,
+        metalness: 0,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      this.envelopeLoad = this.loadIntoFn(EAR_ANATOMY.envelopeMesh, material, this.labyrinthGroup, ENVELOPE_RENDER_ORDER).then(
+        (obj) => {
+          this.envelopeObject = obj;
+          this.envelopeLoad = null;
+          this.applyHousingVisibility();
+        }
+      );
+    }
+    this.applyHousingVisibility();
+  }
+
+  /** Both housing shells are hidden while Micro fluid view is focused on one ampulla --
+   * a shell wrapped around the close-up would sit between the camera and the cupula. */
+  private applyHousingVisibility(): void {
+    if (this.skinObject) this.skinObject.visible = !this.focusedCanal;
+    if (this.envelopeObject) this.envelopeObject.visible = this.envelopeVisible && !this.focusedCanal;
+  }
+
+  /** 'regular' (default): true-scale clot. 'large': enlarged for visibility -- see
+   * CLOT_LARGE_DISPLAY_SCALE. Position tracking is unaffected (set separately in setDebris). */
+  setOtoconiaSize(size: 'regular' | 'large'): void {
+    this.clotGroup.scale.setScalar(size === 'large' ? CLOT_LARGE_DISPLAY_SCALE : 1);
   }
 
   render(): void {

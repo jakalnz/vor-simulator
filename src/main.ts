@@ -298,6 +298,17 @@ wireDisplayGroup('signal', (value) => {
   canalLegendCupulaLabel.textContent = signal === 'cupula' ? 'Cupula (at rest)' : 'Cupula';
 });
 
+wireDisplayGroup('otoconia', (value) => {
+  const size = value as 'regular' | 'large';
+  canalSceneLeft.setOtoconiaSize(size);
+  canalSceneRight.setOtoconiaSize(size);
+});
+
+wireDisplayGroup('envelope', (value) => {
+  canalSceneLeft.setEnvelopeVisible(value === 'shown');
+  canalSceneRight.setEnvelopeVisible(value === 'shown');
+});
+
 /** Combined (left+right) firing-rate deviation from baseline for one canal PLANE --
  * horizontal is that canal on both ears, LARP/RALP each combine two DIFFERENT canal
  * types across the two ears (see PLANE_CANAL_BY_SIDE's doc comment). */

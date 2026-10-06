@@ -2,6 +2,14 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseVtkPolydata, parseFcsv } from './vtk.mjs';
+import { taubinSmooth, unifiedSkin, colorByNearestSource } from './meshOps.mjs';
+
+/** Taubin passes applied to every exported anatomy piece (see meshOps.mjs), and to the
+ * skin/envelope housing meshes -- values chosen in the Labyrinth Model Lab playground.
+ * Smoothing happens only at OBJ-write time: every landmark/centroid this script exports to
+ * earAnatomy.json is still computed from the raw, unsmoothed data. */
+const PIECE_SMOOTH_PASSES = 40;
+const HOUSING_SMOOTH_PASSES = 10;
 
 /**
  * Offline (build-time only, never run at runtime) pipeline: reads the IEMap_data_v_1_0
@@ -102,10 +110,17 @@ function angleDegBetween(a, b) {
   return (Math.acos(c) * 180) / Math.PI;
 }
 
-function writeObj(path, points, indices) {
+/** `colors` (optional, sRGB 0..1 per vertex) is written as OBJ's de-facto `v x y z r g b`
+ * vertex-colour extension, which three's OBJLoader reads. Coordinates are rounded to
+ * `digits` significant digits (7 = sub-nanometre, 5 = ~0.1 micron for this ~15mm model;
+ * both far below anything visible) to keep the files small. */
+function writeObj(path, rawPoints, indices, { smoothPasses = PIECE_SMOOTH_PASSES, colors, digits = 7 } = {}) {
+  const points = taubinSmooth(rawPoints, indices, smoothPasses);
+  const num = (v) => Number(v.toPrecision(digits));
   const lines = [];
   for (let i = 0; i < points.length; i += 3) {
-    lines.push(`v ${points[i]} ${points[i + 1]} ${points[i + 2]}`);
+    const xyz = `${num(points[i])} ${num(points[i + 1])} ${num(points[i + 2])}`;
+    lines.push(colors ? `v ${xyz} ${colors[i].toFixed(2)} ${colors[i + 1].toFixed(2)} ${colors[i + 2].toFixed(2)}` : `v ${xyz}`);
   }
   for (let i = 0; i < indices.length; i += 3) {
     lines.push(`f ${indices[i] + 1} ${indices[i + 1] + 1} ${indices[i + 2] + 1}`);
@@ -134,21 +149,6 @@ function loadMeshHead(filename, recenterOn) {
     headPoints[i + 2] = z - recenterOn[2];
   }
   return { points: headPoints, indices };
-}
-
-/** Merges several already-loaded (points, indices) meshes into one, offsetting each
- * mesh's face indices by the running vertex count -- used to combine CCa+CCp into one
- * "common crus" piece. */
-function mergeMeshes(meshes) {
-  const points = [];
-  const indices = [];
-  let base = 0;
-  for (const m of meshes) {
-    points.push(...m.points);
-    for (const idx of m.indices) indices.push(idx + base);
-    base += m.points.length / 3;
-  }
-  return { points, indices };
 }
 
 // ductPiece (Sp/Sa/Sl -- "slender part") is the narrow duct tube; bulgePiece (Ap/Aa/Al --
@@ -300,12 +300,12 @@ for (const [canalName, { fcsvPrefix, vtkPrefix, ductPiece, bulgePiece }] of Obje
   };
 }
 
-// Common crus: CCa + CCp are the same junction's two pieces (near-identical centroids
-// when checked directly against the raw data) -- merged into one "common-crus.obj".
+// Common crus: CCa only. CCa and CCp are NOT two halves of the junction (as this used to
+// assume) but two nested outlines of the same crus -- measured: ~97% of CCp's vertices
+// lie inside CCa, ~0.15mm in from its wall all round. Merging both drew a visible double
+// wall (reported live), so only the outer outline is exported.
 const ccA = loadMeshHead('ls_Hsapiens_CCa.vtk', ASSEMBLY_ANCHOR);
-const ccP = loadMeshHead('ls_Hsapiens_CCp.vtk', ASSEMBLY_ANCHOR);
-const commonCrusMesh = mergeMeshes([ccA, ccP]);
-writeObj(join(OBJ_OUT_DIR, 'common-crus.obj'), commonCrusMesh.points, commonCrusMesh.indices);
+writeObj(join(OBJ_OUT_DIR, 'common-crus.obj'), ccA.points, ccA.indices);
 earAnatomy.commonCrusMesh = '/models/ear-anatomy/common-crus.obj';
 
 // Horizontal (lateral) canal's own non-ampullary junction into the utricle: unlike
@@ -342,6 +342,56 @@ earAnatomy.utricleMesh = '/models/ear-anatomy/utricle.obj';
 const saccule = loadMeshHead('mesh_david_sacculus.vtk', ASSEMBLY_ANCHOR);
 writeObj(join(OBJ_OUT_DIR, 'saccule.obj'), saccule.points, saccule.indices);
 earAnatomy.sacculeMesh = '/models/ear-anatomy/saccule.obj';
+
+// Unified skin: one seamless surface over the whole membranous labyrinth (see
+// meshOps.mjs's unifiedSkin), drawn as a faint shell around the individual pieces so the
+// joins read as continuous and the saccule (~0.09mm from the utricle) reads as attached.
+// Every closed membranous piece goes into the union, including ones not exported on
+// their own (both crus outlines, the UCp utricle-crus junction, the ampulla-duct walls) --
+// they only add volume where the real membrane is, and help fuse the seams. Coloured per
+// vertex by the nearest source structure, using the scene's own identity colours
+// (canalScene.ts CANAL_TINT / crus / utricle / saccule).
+const SKIN_COLORS = {
+  posterior: 0xd9a441,
+  anterior: 0x9b7ed8,
+  horizontal: 0x74c69d,
+  crus: 0xaaf3ee,
+  utricle: 0x8ca25d,
+  saccule: 0x4f454f,
+};
+const hexToRgb = (hex) => [((hex >> 16) & 255) / 255, ((hex >> 8) & 255) / 255, (hex & 255) / 255];
+const skinSources = [];
+for (const [canalName, { vtkPrefix, ductPiece, bulgePiece }] of Object.entries(CANALS)) {
+  for (const file of [`ls_Hsapiens_${ductPiece}.vtk`, `ls_Hsapiens_${bulgePiece}.vtk`, `ls_Hsapiens_${vtkPrefix}_Cup_Ut.vtk`, `ls_Hsapiens_${vtkPrefix}_Cup_Duct.vtk`])
+    skinSources.push({ ...loadMeshHead(file, ASSEMBLY_ANCHOR), group: canalName });
+}
+skinSources.push({ ...horizontalCanalUtricleWallMesh, group: 'horizontal' });
+for (const file of ['ls_Hsapiens_CCa.vtk', 'ls_Hsapiens_CCp.vtk', 'ls_Hsapiens_UCp.vtk'])
+  skinSources.push({ ...loadMeshHead(file, ASSEMBLY_ANCHOR), group: 'crus' });
+skinSources.push({ ...utricleMesh, group: 'utricle' }, { ...saccule, group: 'saccule' });
+const SKIN_VOXEL_M = 0.08 * MM_TO_M;
+const skin = unifiedSkin(skinSources, SKIN_VOXEL_M, 1.1);
+const skinColors = colorByNearestSource(
+  skin,
+  skinSources.map((s) => ({ points: s.points, color: hexToRgb(SKIN_COLORS[s.group]) })),
+  0.25 * MM_TO_M
+);
+writeObj(join(OBJ_OUT_DIR, 'labyrinth-skin.obj'), skin.points, skin.indices, {
+  smoothPasses: HOUSING_SMOOTH_PASSES,
+  digits: 5,
+  colors: skinColors,
+});
+earAnatomy.skinMesh = '/models/ear-anatomy/labyrinth-skin.obj';
+
+// Fluid envelope: the dataset's T2-MRI fluid segmentation (segT2_th1.07_Otsu.vtk) -- the
+// whole fluid-filled labyrinth, cochlea included. Shown optionally as a faint bony
+// "housing" around the membranous labyrinth (see canalScene.ts setHousingVisible).
+const envelope = loadMeshHead('segT2_th1.07_Otsu.vtk', ASSEMBLY_ANCHOR);
+writeObj(join(OBJ_OUT_DIR, 'fluid-envelope.obj'), envelope.points, envelope.indices, {
+  smoothPasses: HOUSING_SMOOTH_PASSES,
+  digits: 5,
+});
+earAnatomy.envelopeMesh = '/models/ear-anatomy/fluid-envelope.obj';
 
 writeFileSync(JSON_OUT_PATH, JSON.stringify(earAnatomy, null, 2));
 
