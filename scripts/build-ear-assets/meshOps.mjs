@@ -6,7 +6,7 @@ import { edgeTable, triTable } from 'three/examples/jsm/objects/MarchingCubes.js
  * would), and the "unified skin" -- one seamless surface over the whole membranous
  * labyrinth, made by voxelizing the union of every piece, blurring, and re-meshing with
  * marching cubes. Settings were chosen interactively in the Labyrinth Model Lab
- * playground (smooth 40 passes for the pieces, 10 for the skin/envelope housing).
+ * playground (smooth 12 passes for the pieces, 10 for the skin/envelope housing).
  */
 
 function adjacency(indices, vertexCount) {

@@ -253,19 +253,19 @@ const COLOR_SATURATION_HZ = 30;
 
 /**
  * Identity colours/opacities for the non-canal structures, and the optional housing
- * meshes -- chosen interactively in the Labyrinth Model Lab playground (satin finish, see
+ * meshes -- chosen interactively in the Labyrinth Model Lab playground (glass finish, see
  * canalColorMaterial). The skin's own per-vertex colours are baked by
  * scripts/build-ear-assets/build.mjs (SKIN_COLORS) from these same values.
  */
-const COMMON_CRUS_COLOR = 0xaaf3ee;
+const COMMON_CRUS_COLOR = 0x557775;
 const COMMON_CRUS_OPACITY = 0.2;
-const UTRICLE_COLOR = 0x8ca25d;
+const UTRICLE_COLOR = 0x557775;
 const UTRICLE_OPACITY = 0.2;
 const SACCULE_COLOR = 0x4f454f;
 const SACCULE_OPACITY = 0.25;
 /** Unified skin: one seamless surface over the whole membranous labyrinth (see build.mjs),
  * drawn as a faint shell so the joins between pieces read as continuous. */
-const SKIN_OPACITY = 0.25;
+const SKIN_OPACITY = 0.1;
 /** Fluid envelope (T2-MRI fluid segmentation, cochlea included) -- optional bony
  * "housing", off by default, see setEnvelopeVisible. */
 const ENVELOPE_COLOR = 0xb9c4cc;
@@ -649,19 +649,18 @@ export class CanalScene {
 
   private async loadRealAnatomy(): Promise<void> {
     const loader = new OBJLoader();
-    // Satin finish (moderate roughness, no clearcoat) for every anatomy mesh -- chosen in
-    // the Labyrinth Model Lab playground over the earlier glassy look. Low gloss also
-    // matters for the canals specifically: a near-mirror highlight competed with the
-    // emissive excite/inhibit colour underneath (reported live).
+    // Glass finish for every anatomy mesh -- the Labyrinth Model Lab playground's "Glass"
+    // setting, chosen there over satin. Kept to a soft, rough clearcoat rather than the
+    // old near-mirror one (roughness 0.05 / clearcoat 0.6), whose bright highlight
+    // competed with the emissive excite/inhibit colour underneath (reported live).
+    const GLASS_FINISH = { roughness: 0.25, metalness: 0, clearcoat: 0.5, clearcoatRoughness: 0.3 };
     const canalColorMaterial = (color: number, opacity: number, flowCanal?: CanalType) => {
       const material = new THREE.MeshPhysicalMaterial({
         color,
         emissive: color,
         transparent: true,
         opacity,
-        roughness: 0.55,
-        metalness: 0,
-        clearcoat: 0,
+        ...GLASS_FINISH,
         depthWrite: false,
         side: THREE.DoubleSide,
       });
@@ -756,7 +755,7 @@ export class CanalScene {
         depthWrite: false,
       });
     }
-    // Non-signal structures: same satin factory as the ducts, with the glow switched off
+    // Non-signal structures: same glass factory as the ducts, with the glow switched off
     // (the factory's default emissive would otherwise make them brighter than the ducts,
     // which sit at zero glow at rest). Colours: see COMMON_CRUS_COLOR etc.
     const contextMaterial = (color: number, opacity: number) => {
@@ -767,12 +766,11 @@ export class CanalScene {
     const commonCrusMaterial = contextMaterial(COMMON_CRUS_COLOR, COMMON_CRUS_OPACITY);
     const utricleMaterial = contextMaterial(UTRICLE_COLOR, UTRICLE_OPACITY);
     const sacculeMaterial = contextMaterial(SACCULE_COLOR, SACCULE_OPACITY);
-    const skinMaterial = new THREE.MeshStandardMaterial({
+    const skinMaterial = new THREE.MeshPhysicalMaterial({
       vertexColors: true,
       transparent: true,
       opacity: SKIN_OPACITY,
-      roughness: 0.55,
-      metalness: 0,
+      ...GLASS_FINISH,
       depthWrite: false,
       side: THREE.DoubleSide,
     });

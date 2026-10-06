@@ -8,7 +8,7 @@ import { taubinSmooth, unifiedSkin, colorByNearestSource } from './meshOps.mjs';
  * skin/envelope housing meshes -- values chosen in the Labyrinth Model Lab playground.
  * Smoothing happens only at OBJ-write time: every landmark/centroid this script exports to
  * earAnatomy.json is still computed from the raw, unsmoothed data. */
-const PIECE_SMOOTH_PASSES = 40;
+const PIECE_SMOOTH_PASSES = 12;
 const HOUSING_SMOOTH_PASSES = 10;
 
 /**
@@ -355,8 +355,8 @@ const SKIN_COLORS = {
   posterior: 0xd9a441,
   anterior: 0x9b7ed8,
   horizontal: 0x74c69d,
-  crus: 0xaaf3ee,
-  utricle: 0x8ca25d,
+  crus: 0x557775,
+  utricle: 0x557775,
   saccule: 0x4f454f,
 };
 const hexToRgb = (hex) => [((hex >> 16) & 255) / 255, ((hex >> 8) & 255) / 255, (hex & 255) / 255];
