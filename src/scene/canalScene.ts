@@ -51,7 +51,7 @@ interface EarAnatomyData {
   utricleMesh: string;
   commonCrusMesh: string;
   sacculeMesh: string;
-  skinMesh: string;
+  utricleCrusJunctionMesh: string;
   envelopeMesh: string;
 }
 const EAR_ANATOMY = earAnatomyData as unknown as EarAnatomyData;
@@ -253,28 +253,25 @@ const COLOR_SATURATION_HZ = 30;
 
 /**
  * Identity colours/opacities for the non-canal structures, and the optional housing
- * meshes -- chosen interactively in the Labyrinth Model Lab playground (glass finish, see
- * canalColorMaterial). The skin's own per-vertex colours are baked by
- * scripts/build-ear-assets/build.mjs (SKIN_COLORS) from these same values.
+ * mesh -- chosen interactively in the Labyrinth Model Lab playground (glass finish, see
+ * canalColorMaterial). The common crus, the utricle-crus junction (UCp) and the horizontal
+ * canal's simple crus share one fixed colour: all three are non-ampullated crus tissue,
+ * and none carries the excite/inhibit glow.
  */
-const COMMON_CRUS_COLOR = 0x557775;
-const COMMON_CRUS_OPACITY = 0.2;
-const UTRICLE_COLOR = 0x557775;
-const UTRICLE_OPACITY = 0.2;
-const SACCULE_COLOR = 0x4f454f;
-const SACCULE_OPACITY = 0.25;
-/** Unified skin: one seamless surface over the whole membranous labyrinth (see build.mjs),
- * drawn as a faint shell so the joins between pieces read as continuous. */
-const SKIN_OPACITY = 0.1;
+const CRUS_COLOR = 0xba918d;
+const CRUS_OPACITY = 0.4;
+const UTRICLE_COLOR = 0xc926c4;
+const UTRICLE_OPACITY = 0.16;
+const SACCULE_COLOR = 0x26a9c9;
+const SACCULE_OPACITY = 0.2;
 /** Fluid envelope (T2-MRI fluid segmentation, cochlea included) -- optional bony
  * "housing", off by default, see setEnvelopeVisible. */
 const ENVELOPE_COLOR = 0xb9c4cc;
 const ENVELOPE_OPACITY = 0.25;
 /** Draw order for the translucent layers (all depthWrite:false): pieces first (0), then the
- * cupula (1) so the ampulla bulge doesn't wash it out, then the housing shells, so the
- * coloured structures inside stay legible through them. */
-const SKIN_RENDER_ORDER = 2;
-const ENVELOPE_RENDER_ORDER = 3;
+ * cupula (1) so the ampulla bulge doesn't wash it out, then the housing shell, so the
+ * coloured structures inside stay legible through it. */
+const ENVELOPE_RENDER_ORDER = 2;
 
 /**
  * OBJLoader returns non-indexed triangles and, when the file has no normals (ours don't),
@@ -427,10 +424,8 @@ export class CanalScene {
   /** Where the excite/inhibit colour is drawn -- see setSignalMode. */
   private signalMode: 'duct' | 'cupula' = 'duct';
 
-  /** Housing shells (see SKIN_OPACITY/ENVELOPE_COLOR): the skin loads with the rest of
-   * the anatomy; the envelope only on first request (setEnvelopeVisible), since it's off
-   * by default and is the second-largest mesh file. */
-  private skinObject: THREE.Object3D | null = null;
+  /** Fluid-envelope housing shell (see ENVELOPE_COLOR) -- loaded only on first request
+   * (setEnvelopeVisible), since it's off by default and is the largest mesh file. */
   private envelopeObject: THREE.Object3D | null = null;
   private envelopeVisible = false;
   private envelopeLoad: Promise<void> | null = null;
@@ -757,23 +752,15 @@ export class CanalScene {
     }
     // Non-signal structures: same glass factory as the ducts, with the glow switched off
     // (the factory's default emissive would otherwise make them brighter than the ducts,
-    // which sit at zero glow at rest). Colours: see COMMON_CRUS_COLOR etc.
+    // which sit at zero glow at rest). Colours: see CRUS_COLOR etc.
     const contextMaterial = (color: number, opacity: number) => {
       const material = canalColorMaterial(color, opacity);
       material.emissiveIntensity = 0;
       return material;
     };
-    const commonCrusMaterial = contextMaterial(COMMON_CRUS_COLOR, COMMON_CRUS_OPACITY);
+    const crusMaterial = contextMaterial(CRUS_COLOR, CRUS_OPACITY);
     const utricleMaterial = contextMaterial(UTRICLE_COLOR, UTRICLE_OPACITY);
     const sacculeMaterial = contextMaterial(SACCULE_COLOR, SACCULE_OPACITY);
-    const skinMaterial = new THREE.MeshPhysicalMaterial({
-      vertexColors: true,
-      transparent: true,
-      opacity: SKIN_OPACITY,
-      ...GLASS_FINISH,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-    });
 
     const loadInto = async (
       url: string,
@@ -869,14 +856,16 @@ export class CanalScene {
       // mismatched color at the exact point a student's eye is tracking a duct's own
       // identity color toward the crus/utricle junction.
       await loadInto(anatomy.connectorMesh, this.ductMaterials[canal], canalGroup);
-      // The horizontal canal's utricular sinus is the non-ampullated end of the same
-      // duct, so it shares the duct's material (identity tint + excite/inhibit glow).
-      if (anatomy.canalUtricleWallMesh) await loadInto(anatomy.canalUtricleWallMesh, this.ductMaterials[canal], canalGroup);
+      // The horizontal canal's SIMPLE CRUS (its non-ampullated limb into the utricle --
+      // the JSON field name predates that identification) is drawn in the fixed crus
+      // colour, not the duct's glowing material: chosen to read as crus tissue alongside
+      // the common crus, per user request.
+      if (anatomy.canalUtricleWallMesh) await loadInto(anatomy.canalUtricleWallMesh, crusMaterial, canalGroup);
     }
-    await loadInto(EAR_ANATOMY.commonCrusMesh, commonCrusMaterial);
+    await loadInto(EAR_ANATOMY.commonCrusMesh, crusMaterial);
+    await loadInto(EAR_ANATOMY.utricleCrusJunctionMesh, crusMaterial);
     await loadInto(EAR_ANATOMY.utricleMesh, utricleMaterial);
     await loadInto(EAR_ANATOMY.sacculeMesh, sacculeMaterial);
-    this.skinObject = await loadInto(EAR_ANATOMY.skinMesh, skinMaterial, this.labyrinthGroup, SKIN_RENDER_ORDER);
     // Honour an envelope toggle made before this async load finished.
     this.setEnvelopeVisible(this.envelopeVisible);
 
@@ -1298,10 +1287,9 @@ export class CanalScene {
     this.applyHousingVisibility();
   }
 
-  /** Both housing shells are hidden while Micro fluid view is focused on one ampulla --
-   * a shell wrapped around the close-up would sit between the camera and the cupula. */
+  /** The envelope is hidden while Micro fluid view is focused on one ampulla -- a shell
+   * wrapped around the close-up would sit between the camera and the cupula. */
   private applyHousingVisibility(): void {
-    if (this.skinObject) this.skinObject.visible = !this.focusedCanal;
     if (this.envelopeObject) this.envelopeObject.visible = this.envelopeVisible && !this.focusedCanal;
   }
 
