@@ -55,6 +55,10 @@ export interface ControlsCallbacks {
   onPause: () => void;
   /** fraction is normalized 0..1 of the maneuver's total duration. */
   onScrub: (fraction: number) => void;
+  /** Jump to the previous/next stage of the scripted maneuver (see setChapters). */
+  onChapterStep: (direction: 'previous' | 'next') => void;
+  /** Jump to stage `index` (0-based, in setChapters order). */
+  onChapterSelect: (index: number) => void;
 }
 
 const CANAL_LABELS: Record<CanalType, string> = {
@@ -81,6 +85,9 @@ export class Controls {
   private readonly scrub: HTMLInputElement;
   private readonly maneuverLabel: HTMLSpanElement;
   private readonly scrubColumn: HTMLDivElement;
+  /** Stage ("chapter") markers laid over the scrub bar -- see setChapters. */
+  private readonly chapterTrack: HTMLDivElement;
+  private chapterSelect: (index: number) => void = () => {};
   private scrubbing = false;
   /** Repopulates the maneuver dropdown for a given canal -- assigned in the constructor
    * (needs `callbacks` from the constructor's closure) and exposed via setManeuverCanal. */
@@ -283,13 +290,43 @@ export class Controls {
     this.scrub.addEventListener('pointerup', () => (this.scrubbing = false));
     this.scrub.addEventListener('input', () => callbacks.onScrub(parseFloat(this.scrub.value)));
 
+    // Stage markers sit in their own strip just under the scrub bar (not on top of it, so
+    // they never steal the drag from the scrub handle). Each one fast-forwards the
+    // simulation to that stage's start -- see main.ts seekManeuver for why that's a real
+    // simulated fast-forward rather than a plain scrub.
+    this.chapterTrack = document.createElement('div');
+    this.chapterTrack.className = 'chapter-track';
+    this.chapterSelect = callbacks.onChapterSelect;
+
+    const scrubStack = document.createElement('div');
+    scrubStack.className = 'scrub-stack';
+    scrubStack.append(this.scrub, this.chapterTrack);
+
     this.scrubColumn = document.createElement('div');
     this.scrubColumn.className = 'scrub-column';
-    this.scrubColumn.append(this.maneuverLabel, this.scrub);
+    this.scrubColumn.append(this.maneuverLabel, scrubStack);
+
+    const makeChapterStepButton = (direction: 'previous' | 'next') => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'chapter-step';
+      b.textContent = direction === 'previous' ? '⏮' : '⏭';
+      const label = direction === 'previous' ? 'Previous stage' : 'Next stage';
+      b.title = label;
+      b.setAttribute('aria-label', label);
+      b.addEventListener('click', () => callbacks.onChapterStep(direction));
+      return b;
+    };
 
     this.maneuverGroup = document.createElement('div');
     this.maneuverGroup.className = 'control-group';
-    this.maneuverGroup.append(this.maneuverSelect, this.playBtn, this.scrubColumn);
+    this.maneuverGroup.append(
+      this.maneuverSelect,
+      makeChapterStepButton('previous'),
+      this.playBtn,
+      makeChapterStepButton('next'),
+      this.scrubColumn
+    );
 
     this.updateModeVisibility(initialMode);
 
@@ -383,6 +420,23 @@ export class Controls {
   setProgress(fraction: number, label: string): void {
     if (!this.scrubbing) this.scrub.value = String(fraction);
     this.maneuverLabel.textContent = label;
+  }
+
+  /** Rebuilds the stage markers under the scrub bar for the current maneuver. */
+  setChapters(chapters: { fraction: number; label: string }[]): void {
+    this.chapterTrack.replaceChildren(
+      ...chapters.map((chapter, i) => {
+        const marker = document.createElement('button');
+        marker.type = 'button';
+        marker.className = 'chapter-marker';
+        marker.style.left = `${chapter.fraction * 100}%`;
+        marker.textContent = String(i + 1);
+        marker.title = `Stage ${i + 1}: ${chapter.label}`;
+        marker.setAttribute('aria-label', `Jump to stage ${i + 1}: ${chapter.label}`);
+        marker.addEventListener('click', () => this.chapterSelect(i));
+        return marker;
+      })
+    );
   }
 
   setPlayingLabel(playing: boolean): void {

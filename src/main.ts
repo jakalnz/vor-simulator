@@ -449,6 +449,8 @@ let bppvSelection: BppvSelection = null;
 function applyManeuver(): void {
   const side = bppvSelection?.side ?? 'right';
   maneuverPlayer.setManeuver(MANEUVERS_BY_SIDE_AND_KEY[side][maneuverKey]);
+  const duration = maneuverPlayer.duration;
+  controls?.setChapters(maneuverPlayer.chapters.map((c) => ({ fraction: c.t / duration, label: c.label })));
   // controls itself isn't constructed yet the FIRST time this runs -- Controls'
   // constructor synchronously fires its own onSelectManeuver callback once while
   // populating the maneuver dropdown, which reaches here before `new Controls(...)`
@@ -522,6 +524,8 @@ controls = new Controls(
     onPlay: () => maneuverPlayer.play(),
     onPause: () => maneuverPlayer.pause(),
     onScrub: (fraction: number) => maneuverPlayer.scrubTo(fraction * maneuverPlayer.duration),
+    onChapterStep: (direction) => seekChapter(direction),
+    onChapterSelect: (index: number) => seekManeuver(maneuverPlayer.chapters[index]?.t ?? 0),
   },
   mode
 );
@@ -688,6 +692,52 @@ setInterval(() => {
     accumulator -= FIXED_DT;
   }
 }, 1000 / 120);
+
+/**
+ * Chapter navigation for scripted maneuvers: jumps playback to `targetSeconds` by
+ * actually SIMULATING the skipped time (the same fixed-step physics as real-time
+ * playback, just run back-to-back), not by setting the clock like the scrub bar does --
+ * otherwise the otoconia/cupula/eye state would be left wherever it was, e.g. debris
+ * still sitting at the start of the canal at Epley's final "Sit up" stage. Seeking
+ * backwards replays from the start. Keeps the play/pause state it found.
+ */
+function seekManeuver(targetSeconds: number): void {
+  // stepPhysicsOnce only advances the maneuver clock in maneuver mode -- anywhere else
+  // the loop below would never finish.
+  if (mode !== 'maneuver') return;
+  const wasPlaying = maneuverPlayer.isPlaying;
+  if (targetSeconds < maneuverPlayer.elapsedSeconds) {
+    resetPhysics();
+  }
+  maneuverPlayer.play();
+  // At most one fixed step past the target -- a chapter start is just a waypoint time.
+  while (maneuverPlayer.elapsedSeconds < targetSeconds - 1e-9 && !maneuverPlayer.isFinished()) {
+    stepPhysicsOnce(FIXED_DT);
+  }
+  // Summed 1/120s steps can land a hair BEFORE the target (float accumulation), which
+  // would leave the stage label showing the previous segment -- snap onto it exactly.
+  if (maneuverPlayer.elapsedSeconds < targetSeconds) maneuverPlayer.scrubTo(targetSeconds);
+  if (wasPlaying) maneuverPlayer.play();
+  else maneuverPlayer.pause();
+  controls.setPlayingLabel(maneuverPlayer.isPlaying);
+}
+
+/** Stage-jump targets: the previous chapter is the one before the stage currently
+ * playing, unless we're more than CHAPTER_RESTART_S into it, in which case it restarts
+ * the current stage -- the usual media-player "previous track" behaviour. */
+const CHAPTER_RESTART_S = 1.5;
+function seekChapter(direction: 'previous' | 'next'): void {
+  const now = maneuverPlayer.elapsedSeconds;
+  const starts = maneuverPlayer.chapters.map((c) => c.t);
+  if (direction === 'next') {
+    const next = starts.find((t) => t > now + 1e-6);
+    if (next !== undefined) seekManeuver(next);
+    return;
+  }
+  const current = [...starts].reverse().find((t) => t <= now + 1e-6) ?? 0;
+  const target = now - current > CHAPTER_RESTART_S ? current : ([...starts].reverse().find((t) => t < current - 1e-6) ?? 0);
+  seekManeuver(target);
+}
 
 function renderFrame(): void {
   eyeSceneLeft.setEyeAngle(lastEye);

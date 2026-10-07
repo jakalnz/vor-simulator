@@ -742,6 +742,50 @@ body {
   line-height: 1.2;
 }
 
+/* Scrub bar plus its stage-marker strip (see controls.ts setChapters). The strip is a
+ * separate row under the range input rather than overlaid on it, so the markers never
+ * intercept a drag of the scrub handle. Kept short (14px) to fit the mobile control
+ * bar's 12vh cap. The range input's own side inset is matched by the strip's padding,
+ * so a marker at fraction f lines up with the handle's position at f. */
+.scrub-stack {
+  display: flex;
+  flex-direction: column;
+}
+
+.chapter-track {
+  position: relative;
+  height: 14px;
+  margin-inline: 8px;
+}
+
+#controls .chapter-marker {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  width: 14px;
+  height: 14px;
+  min-height: 0;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--accent);
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: 8px;
+  line-height: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+#controls .chapter-marker:hover,
+#controls .chapter-marker:focus-visible {
+  background: var(--accent);
+  color: #14100a;
+}
+
+#controls .chapter-step {
+  padding-inline: 8px;
+  line-height: 1;
+}
+
 /* flex-wrap explicitly nowrap (not just relying on the flex default) -- each
  * control-group is one atomic item within #controls's own wrapping row (#controls has
  * flex-wrap: wrap), so when a group doesn't fit on the current line it moves to the next
@@ -922,6 +966,23 @@ body {
    * phone user isn't reading, at the direct expense of the views above. */
   .debug-readout {
     display: none;
+  }
+
+  /* No stage-marker strip on phones: even shrunk, it added a row's worth of height to a
+   * bar that's already squeezed on short screens (measured), at the eye/canal views'
+   * expense. The ⏮/⏭ buttons beside Play give the same stage-by-stage jumps. */
+  .chapter-track {
+    display: none;
+  }
+
+  /* The ⏮/⏭ buttons widened the maneuver row past a 390px phone (measured 24px over) --
+   * slimmer buttons and a slightly narrower minimum scrub bar bring it back inside. */
+  #controls .chapter-step {
+    padding-inline: 5px;
+  }
+
+  .scrub-column {
+    min-width: 90px;
   }
 }
 
