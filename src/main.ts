@@ -1,4 +1,4 @@
-import { Quat, angularVelocityBody, v3, rotateVec, quatInvert } from './physics/types';
+import { Quat, Vec3, angularVelocityBody, v3, rotateVec, quatInvert } from './physics/types';
 import { CanalType, EarSide, ALL_CANAL_TYPES } from './physics/canal';
 import { CanalFunction, normalCanalFunction, withCanalFunction } from './physics/pathology';
 import { VorEngineState, initialVorEngineState, stepVorEngine, PerCanalSide } from './physics/vorEngine';
@@ -589,6 +589,23 @@ let lastFiringRates = {
 let lastHeadAngularVelocity: [number, number, number] = [0, 0, 0];
 let lastEye = { horizontalDeg: 0, verticalDeg: 0, torsionalDeg: 0 };
 
+/**
+ * Gyroscope-mode head velocities below this are treated as sensor noise, not head
+ * movement (see softDeadband) -- complements DeviceOrientationSource's heading-drift
+ * filter so leftover jitter can't feed a faint false nystagmus with the phone still.
+ * Far below any VOR-relevant head movement (tens to hundreds of °/s).
+ */
+const GYRO_DEADBAND_RAD_S = (1.5 * Math.PI) / 180;
+
+/** Shrinks a vector's magnitude by `threshold` (zero below it) -- a soft dead-band, so
+ * there's no jump in velocity as a real movement crosses the threshold. */
+function softDeadband(v: Vec3, threshold: number): Vec3 {
+  const magnitude = Math.hypot(v[0], v[1], v[2]);
+  if (magnitude <= threshold) return v3(0, 0, 0);
+  const k = (magnitude - threshold) / magnitude;
+  return v3(v[0] * k, v[1] * k, v[2] * k);
+}
+
 /** One fixed-timestep physics update: orientation -> angular velocity -> VOR engine. */
 function stepPhysicsOnce(dt: number): void {
   const source = activeOrientationSource();
@@ -606,7 +623,8 @@ function stepPhysicsOnce(dt: number): void {
     if (elapsedSeconds > 0) velocityDt = elapsedSeconds;
   }
   if (sampleTimestampMs !== null) prevSampleTimestampMs = sampleTimestampMs;
-  const omegaBody = angularVelocityBody(prevQHeadForVelocity, qHead, velocityDt);
+  let omegaBody = angularVelocityBody(prevQHeadForVelocity, qHead, velocityDt);
+  if (mode === 'gyro') omegaBody = softDeadband(omegaBody, GYRO_DEADBAND_RAD_S);
   prevQHeadForVelocity = qHead;
   lastHeadAngularVelocity = [omegaBody[0], omegaBody[1], omegaBody[2]];
 

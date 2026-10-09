@@ -1,4 +1,5 @@
 import { OrientationSource } from './orientationSource';
+import { YawDriftFilter } from './yawDriftFilter';
 import {
   Quat,
   quatFromAxisAngle,
@@ -77,8 +78,13 @@ export class DeviceOrientationSource implements OrientationSource {
   private latestRaw: Quat | null = null;
   private zeroInv: Quat | null = null;
   private latestRawAtMs: number | null = null;
+  /** Absorbs heading drift while the phone is still -- see YawDriftFilter. */
+  private readonly driftFilter = new YawDriftFilter();
 
   start(): void {
+    // A fresh start: the gap since the last sample must not read as slow (= "still")
+    // motion and be absorbed as drift.
+    this.driftFilter.reset();
     window.addEventListener('deviceorientation', this.onEvent);
   }
 
@@ -118,8 +124,9 @@ export class DeviceOrientationSource implements OrientationSource {
     // corresponds to the device-local vector HEAD_FRAME_TO_DEVICE * v_hf (the inverse of
     // the device->headframe conversion), then the HeadFrame-native quaternion is
     // qDevice composed with HEAD_FRAME_TO_DEVICE.
-    this.latestRaw = quatCompose(qDevice, HEAD_FRAME_TO_DEVICE);
-    this.latestRawAtMs = performance.now();
+    const nowMs = performance.now();
+    this.latestRaw = this.driftFilter.update(quatCompose(qDevice, HEAD_FRAME_TO_DEVICE), nowMs);
+    this.latestRawAtMs = nowMs;
   };
 }
 
