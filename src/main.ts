@@ -9,6 +9,7 @@ import QRCode from 'qrcode';
 
 import { OrientationSource } from './sensors/orientationSource';
 import { DeviceOrientationSource, requestOrientationPermission } from './sensors/deviceOrientation';
+import { SampleRotationSpreader } from './sensors/sampleRotationSpreader';
 import { MouseDragSource } from './sensors/mouseDragSource';
 
 import { EyeScene } from './scene/eyeScene';
@@ -560,6 +561,10 @@ let simulationTimeSeconds = 0;
 let prevQHeadForVelocity: Quat = lastQHead;
 let prevSampleTimestampMs: number | null = null;
 
+/** Spreads each gyro sample's rotation across physics ticks -- see SampleRotationSpreader.
+ * Declared here, ahead of resetPhysics, which resets it. */
+const sampleSpreader = new SampleRotationSpreader();
+
 function resetPhysics(): void {
   vorState = initialVorEngineState();
   canalithState = initialCanalithState();
@@ -576,6 +581,7 @@ function resetPhysics(): void {
   simulationTimeSeconds = 0;
   prevQHeadForVelocity = activeOrientationSource().currentOrientation() ?? lastQHead;
   prevSampleTimestampMs = activeOrientationSource().sampleTimestampMs?.() ?? null;
+  sampleSpreader.reset();
   vngTrace.reset();
 }
 
@@ -618,15 +624,27 @@ function stepPhysicsOnce(dt: number): void {
   // sample timestamp when available.
   const sampleTimestampMs = source.sampleTimestampMs?.() ?? null;
   let velocityDt = dt;
+  let isNewSample = false;
   if (sampleTimestampMs !== null && prevSampleTimestampMs !== null) {
     const elapsedSeconds = (sampleTimestampMs - prevSampleTimestampMs) / 1000;
-    if (elapsedSeconds > 0) velocityDt = elapsedSeconds;
+    if (elapsedSeconds > 0) {
+      velocityDt = elapsedSeconds;
+      isNewSample = true;
+    }
   }
   if (sampleTimestampMs !== null) prevSampleTimestampMs = sampleTimestampMs;
-  let omegaBody = angularVelocityBody(prevQHeadForVelocity, qHead, velocityDt);
-  if (mode === 'gyro') omegaBody = softDeadband(omegaBody, GYRO_DEADBAND_RAD_S);
+  // Per-sample velocity: non-zero only on the tick a new sensor sample lands. The
+  // cupulolithiasis jolt detector is built around exactly these sparse samples (see
+  // cupulolith.ts's leaky accumulator), so it keeps receiving them unchanged.
+  const omegaBody = angularVelocityBody(prevQHeadForVelocity, qHead, velocityDt);
   prevQHeadForVelocity = qHead;
-  lastHeadAngularVelocity = [omegaBody[0], omegaBody[1], omegaBody[2]];
+  // The VOR engine instead gets each sample's rotation spread evenly over the ticks until
+  // the next sample (see SampleRotationSpreader) -- otherwise, with the gyro reporting at
+  // ~60Hz against 120Hz physics, the cupula integrated only one tick's worth of each
+  // sample's movement and the gyro-mode response came out at roughly half strength.
+  let omegaForVor = sampleTimestampMs !== null ? sampleSpreader.step(omegaBody, velocityDt, isNewSample, dt) : omegaBody;
+  if (mode === 'gyro') omegaForVor = softDeadband(omegaForVor, GYRO_DEADBAND_RAD_S);
+  lastHeadAngularVelocity = [omegaForVor[0], omegaForVor[1], omegaForVor[2]];
 
   if (mode === 'maneuver') maneuverPlayer.tick(dt);
 
@@ -681,7 +699,7 @@ function stepPhysicsOnce(dt: number): void {
     }
   }
 
-  const result = stepVorEngine(vorState, omegaBody, dt, canalFunction, undefined, debrisFlow);
+  const result = stepVorEngine(vorState, omegaForVor, dt, canalFunction, undefined, debrisFlow);
   vorState = result.state;
   lastFiringRates = result.firingRates;
   lastEye = result.eye;
