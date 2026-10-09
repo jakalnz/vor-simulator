@@ -74,23 +74,21 @@ describe('stepVorEngine', () => {
     expect(roll.torsionalDeg).toBeGreaterThan(yaw.torsionalDeg * 3);
   });
 
-  it('right-ear-down roll produces a COMPENSATORY (CCW) torsional response', () => {
-    // Regression coverage alongside the vertical-axis fix above: verified independently
-    // (not just carried over from old code) via v = omega x r. HeadFrame +X is anterior;
-    // a positive rotation about it (omega_x > 0) moves the right ear (at roughly
-    // HeadFrame -Y) toward -Z, i.e. downward -- a right-ear-down roll. A correct VOR
-    // counter-rolls the eye CCW (as seen from the front, eyeScene.ts's convention for
-    // positive torsionalDeg) to keep the retinal image upright. Unlike the vertical axis,
-    // this one was checked and found to already be correct (torsionalDeg's existing
-    // negation, inherited from the old engine, happens to still be right here) --
-    // asserted as a permanent regression test rather than left as a one-off manual check.
+  it('right-ear-down roll produces a COMPENSATORY (clockwise-from-the-front) torsional response', () => {
+    // HeadFrame +X is anterior; a positive rotation about it (omega_x > 0) moves the right
+    // ear (HeadFrame -Y) toward -Z -- a right-ear-down roll, which tips the top of the head
+    // toward the patient's right: COUNTERclockwise as an examiner facing the patient sees
+    // it. The compensatory counter-roll tips the top of the eye the other way (toward the
+    // upper, left ear), CLOCKWISE from the front -- negative in eyeScene.ts's "positive
+    // torsionalDeg = CCW from the front" convention. This test previously asserted the
+    // opposite (> 0), which made the eyes roll WITH the head (reported live).
     let state = initialVorEngineState();
     let result;
     for (let i = 0; i < Math.round(0.1 / DT); i++) {
       result = stepVorEngine(state, v3(1.5, 0, 0), DT);
       state = result.state;
     }
-    expect(result!.eye.torsionalDeg).toBeGreaterThan(0);
+    expect(result!.eye.torsionalDeg).toBeLessThan(0);
   });
 
   it('opposite head velocities produce opposite-signed horizontal responses', () => {

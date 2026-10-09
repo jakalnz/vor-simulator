@@ -160,16 +160,23 @@ export function stepVorEngine(
   //  - Horizontal (Z, yaw): a rightward head turn compensates toward HeadFrame +Y (left),
   //    which -- via the mirrored examiner-view convention eyeScene.ts already uses --
   //    reads as screen-right, matching "positive = screen-right". No negation needed.
-  //  - Torsional (X, roll): a right-ear-down head roll (positive omega_x) needs a CCW
-  //    (examiner-view) counter-roll to compensate, matching "positive = CCW". Needs a
-  //    negation (confirmed by direct derivation, not just carried over from old code).
+  //  - Torsional (X, roll): a right-ear-down head roll (positive omega_x) tips the top of
+  //    the head toward the patient's right -- counterclockwise as an examiner facing the
+  //    patient sees it. The compensatory counter-roll tips the top of the eye the other
+  //    way, toward the patient's LEFT (upper) ear = the examiner's right = CLOCKWISE
+  //    from the front, i.e. NEGATIVE in the "positive = CCW" convention. eyeOmegaX is
+  //    already that compensatory rotation (negative about +X for positive omega_x), and
+  //    a negative rotation about +X (anterior, pointing at the examiner) is clockwise as
+  //    the examiner sees it -- so NO negation. An earlier version negated here (claiming
+  //    the counter-roll should be CCW from the front), which made the eyes roll WITH the
+  //    head (reported live) and reversed the torsional component of BPPV nystagmus.
   //  - Vertical (Y, pitch): a nose-down head pitch (positive omega_y) produces gaze
   //    compensation toward HeadFrame +Z (up) -- but the OLD code's un-negated n[1]
   //    convention (carried over here originally) instead reported that as NEGATIVE
   //    (down), causing the eyes to visually pitch WITH the head instead of against it
   //    (reported by a live user: "when the head tilts down, the eyes tilt down"). Fixed
   //    by negating: positive eyeAngleV now correctly means up.
-  let eyeAngleT = state.eyeAngleT + -eyeOmegaX * dt;
+  let eyeAngleT = state.eyeAngleT + eyeOmegaX * dt;
   let eyeAngleV = state.eyeAngleV + -eyeOmegaY * dt;
   let eyeAngleH = state.eyeAngleH + eyeOmegaZ * dt;
 
