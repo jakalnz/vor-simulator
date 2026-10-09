@@ -1,4 +1,4 @@
-import { Maneuver } from './types';
+import { Maneuver, Waypoint } from './types';
 import { Quat, quatIdentity, quatFromAxisAngle, quatCompose, v3, DEG2RAD } from '../physics/types';
 import { EarSide } from '../physics/canal';
 import { turnSign, rollSign } from './signs';
@@ -33,18 +33,39 @@ function semontRollAtPhi(side: EarSide, phiDeg: number): Quat {
   return quatCompose(roll, turnedAway45(side));
 }
 
+/**
+ * How far below horizontal the liberatory version lies the patient, in BOTH positions --
+ * the "Sémont-plus" (SM+) modification. Obrist et al. 2016 (Front Neurol 7:150,
+ * doi:10.3389/fneur.2016.00150) found in a physical canal model that the classic Semont,
+ * lying only to horizontal, did not reposition the debris at all; extending the movements
+ * 20° or more below horizontal did. This model reproduces that: with the second position
+ * exactly 180° from the first, the debris' resting point in position 1 becomes the CREST
+ * of the canal in position 2, and it rolls back to the ampulla (reported live as "falls
+ * back after the second position").
+ *
+ * 30° rather than 20° (both within the paper's tested range): this model runs the debris
+ * ~10x faster than real otoconia so its 30s holds can stand in for real minutes-long
+ * ones, but the ~1s flip isn't compressed the same way -- so the debris slides back
+ * further during the flip than it would in reality, and 20° falls just short here.
+ */
+const SEMONT_PLUS_BELOW_HORIZONTAL_DEG = 30;
+
 export function buildSemont(side: EarSide, liberatory: boolean): Maneuver {
   const upright = quatIdentity();
   const turned = turnedAway45(side);
-  const lieOnAffectedSide = semontRollAtPhi(side, 90);
-  const lieOnOppositeSide = semontRollAtPhi(side, -90);
+  const lieAngle = liberatory ? 90 + SEMONT_PLUS_BELOW_HORIZONTAL_DEG : 90;
+  const lieOnAffectedSide = semontRollAtPhi(side, lieAngle);
+  const lieOnOppositeSide = semontRollAtPhi(side, -lieAngle);
+  const lieLabel = liberatory
+    ? `Rapid lie onto ${side} side, head ${SEMONT_PLUS_BELOW_HORIZONTAL_DEG}° below horizontal`
+    : `Rapid lie onto ${side} side`;
 
-  const waypoints = [
+  const waypoints: Waypoint[] = [
     { t: 0, quat: upright, label: 'Seated upright' },
     { t: 1.5, quat: turned, label: `Head turned 45° away from ${side} ear` },
     // Fast transition (~1s): the flip's speed has no physics consequence in this model
     // (ManeuverPlayer only SLERPs by elapsed time), it's purely visual pacing.
-    { t: 2.5, quat: lieOnAffectedSide, label: `Rapid lie onto ${side} side` },
+    { t: 2.5, quat: lieOnAffectedSide, label: lieLabel },
     { t: 32.5, quat: lieOnAffectedSide, label: 'Hold (observe nystagmus)' },
   ];
 
@@ -55,7 +76,15 @@ export function buildSemont(side: EarSide, liberatory: boolean): Maneuver {
     );
   } else {
     waypoints.push(
-      { t: 33.5, quat: lieOnOppositeSide, label: 'Rapid flip to opposite side, face down' },
+      // Unlabelled midpoint at sitting: the flip spans 2 x lieAngle (> 180° for Semont-
+      // plus), and a slerp always takes the SHORTER way round -- without this it would
+      // swing the patient through head-down instead of through sitting, as Semont is done.
+      { t: 33, quat: turned },
+      {
+        t: 33.5,
+        quat: lieOnOppositeSide,
+        label: `Rapid flip through sitting to the opposite side, face down, ${SEMONT_PLUS_BELOW_HORIZONTAL_DEG}° below horizontal`,
+      },
       { t: 63.5, quat: lieOnOppositeSide, label: 'Hold (observe nystagmus)' },
       // Sit up as one sideways arc, head still turned 45° (see poses.ts sitUpFrom) --
       // was a slerp back to `upright` that also unwound the turn mid sit-up.
@@ -63,7 +92,7 @@ export function buildSemont(side: EarSide, liberatory: boolean): Maneuver {
     );
   }
 
-  return { name: `Semont ${liberatory ? '(liberatory)' : '(diagnostic)'} (${side})`, waypoints };
+  return { name: `${liberatory ? 'Semont-plus (liberatory)' : 'Semont (diagnostic)'} (${side})`, waypoints };
 }
 
 export const semontDiagnosticRight = buildSemont('right', false);

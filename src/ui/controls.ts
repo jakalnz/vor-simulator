@@ -19,13 +19,13 @@ const MANEUVERS_BY_CANAL: Record<CanalType, { key: ManeuverKey; label: string }[
   posterior: [
     { key: 'dixHallpike', label: 'Dix-Hallpike' },
     { key: 'semontDiagnostic', label: 'Semont (diagnostic)' },
-    { key: 'semontLiberatory', label: 'Semont (liberatory)' },
+    { key: 'semontLiberatory', label: 'Semont-plus (liberatory)' },
     { key: 'epley', label: 'Epley' },
   ],
   anterior: [
     { key: 'dixHallpike', label: 'Dix-Hallpike' },
     { key: 'semontDiagnostic', label: 'Semont (diagnostic)' },
-    { key: 'semontLiberatory', label: 'Semont (liberatory)' },
+    { key: 'semontLiberatory', label: 'Semont-plus (liberatory)' },
     { key: 'epley', label: 'Epley' },
   ],
   horizontal: [
