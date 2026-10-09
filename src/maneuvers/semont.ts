@@ -2,6 +2,7 @@ import { Maneuver } from './types';
 import { Quat, quatIdentity, quatFromAxisAngle, quatCompose, v3, DEG2RAD } from '../physics/types';
 import { EarSide } from '../physics/canal';
 import { turnSign, rollSign } from './signs';
+import { sitUpFrom } from './poses';
 
 /**
  * Semont maneuver for the posterior canal, parametrized by affected ear and whether the
@@ -56,7 +57,9 @@ export function buildSemont(side: EarSide, liberatory: boolean): Maneuver {
     waypoints.push(
       { t: 33.5, quat: lieOnOppositeSide, label: 'Rapid flip to opposite side, face down' },
       { t: 63.5, quat: lieOnOppositeSide, label: 'Hold (observe nystagmus)' },
-      { t: 65, quat: upright, label: 'Slowly sit back up' }
+      // Sit up as one sideways arc, head still turned 45° (see poses.ts sitUpFrom) --
+      // was a slerp back to `upright` that also unwound the turn mid sit-up.
+      { t: 65, quat: sitUpFrom(lieOnOppositeSide), label: 'Slowly sit back up' }
     );
   }
 

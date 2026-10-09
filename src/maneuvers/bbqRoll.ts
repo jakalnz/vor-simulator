@@ -2,6 +2,7 @@ import { Maneuver } from './types';
 import { quatIdentity, quatFromAxisAngle, quatCompose, v3, DEG2RAD, Quat } from '../physics/types';
 import { EarSide } from '../physics/canal';
 import { rollSign } from './signs';
+import { sitUpFrom } from './poses';
 
 /**
  * BBQ roll (Lempert maneuver), the repositioning maneuver for horizontal canalithiasis,
@@ -42,7 +43,9 @@ export function buildBbqRoll(side: EarSide): Maneuver {
       { t: 98, quat: oppositeEarDown, label: 'Hold' },
       { t: 101, quat: prone, label: 'Rolled further, face down' },
       { t: 131, quat: prone, label: 'Hold' },
-      { t: 134, quat: upright, label: 'Sit up' },
+      // Up from prone as one nose-down -> nose-level arc (see poses.ts sitUpFrom) -- was
+      // a 180° diagonal slerp back to `upright` that swung the nose ~77° sideways.
+      { t: 134, quat: sitUpFrom(prone), label: 'Sit up' },
     ],
   };
 }

@@ -2,6 +2,7 @@ import { Maneuver } from './types';
 import { Quat, quatIdentity, quatFromAxisAngle, quatCompose, v3, DEG2RAD } from '../physics/types';
 import { EarSide } from '../physics/canal';
 import { turnSign, rollSign } from './signs';
+import { sitUpFrom } from './poses';
 
 /**
  * Zuma (Zuma e Maia) maneuver for apogeotropic horizontal-canal cupulolithiasis, from
@@ -46,7 +47,10 @@ export function buildZuma(side: EarSide): Maneuver {
       { t: 42.4, quat: supineHeadTurnedAway, label: `Supine, head turned 90° toward ${opposite} (unaffected) side` },
       { t: 62.4, quat: supineHeadTurnedAway, label: 'Hold' },
       { t: 64.4, quat: headTiltedForward, label: 'Head tilted slightly forward' },
-      { t: 67.4, quat: upright, label: 'Slowly return to sitting' },
+      // Sit up as one arc with the head still turned toward the unaffected side (see
+      // poses.ts sitUpFrom) -- was a slerp back to `upright` that unwound the 90° turn
+      // mid sit-up.
+      { t: 67.4, quat: sitUpFrom(headTiltedForward), label: 'Slowly return to sitting' },
     ],
   };
 }
